@@ -22,8 +22,11 @@ The tick (DESIGN.md §3.2), serialized, at-least-once end to end:
   3. observe   — watched uuids whose local copy hit a terminal state →
                  report (completed / canceled / trashed→canceled).
   4. retag     — sender-side: transfers that reached `applied` swap the
-                 trigger tag for the delegated tag (waiting-for UX,
-                 doubles as the delivery receipt).
+                 trigger tag for the delegated tag AND mark the sender's own
+                 copy completed (2026-07-11 D2 amendment: delegating IS the
+                 action; the sender's copy is done the moment the handoff is
+                 confirmed, not when the recipient eventually finishes it).
+                 Symmetric on both directions ("either side").
 
 Crash safety: a tiny local SQLite journal records create-apply intent
 BEFORE firing the write. On restart with an open journal entry the spoke
@@ -356,12 +359,22 @@ class SpokeCore:
             time.sleep(self.correlate_interval)
 
     def _apply_terminal(self, d: dict) -> None:
-        state = "completed" if d["kind"] == "complete" else "canceled"
-        ok = self.writer.set_terminal(d["uuid"], state)
+        """Terminal echo deliveries only ever address the sender (D2's own
+        auto-complete already handles the fast path — see
+        _retag_sender_copy). This is the race-safety-net path: if the
+        recipient resolves their copy before the sender's own next tick gets
+        to retag (the transfer's terminal is then already set, so it drops
+        off the sender's watchlist and _retag_sender_copy never runs for
+        it), this is the only remaining place the sender's copy gets
+        touched. D2 is unconditional — the sender's copy is ALWAYS
+        "completed", never "canceled", regardless of what the recipient did
+        with theirs or which delivery kind carried the echo. Idempotent if
+        _retag_sender_copy already got there first."""
+        ok = self.writer.set_terminal(d["uuid"], "completed")
         if not ok:
             raise RuntimeError(f"terminal apply not verified for {d['uuid']}")
         self.hub.ack(d["id"])
-        _log(f"applied {state} echo on {d['uuid']}")
+        _log(f"applied sender-side auto-complete on {d['uuid']} (D2, delivery kind={d['kind']})")
 
     # -- 3+4. observations + sender retag -----------------------------------
     def _observe_and_retag(self) -> None:
@@ -371,6 +384,12 @@ class SpokeCore:
             _log(f"watch poll failed: {exc}")
             return
         for w in watch:
+            if w["role"] == "sender" and self.state.is_retagged(w["transfer_id"]):
+                # Already retagged + auto-completed by our own action (D2) —
+                # that "completed" status is our doing, not a fresh signal.
+                # Reporting it via observe() would wrongly echo a completion
+                # to the recipient before they've actually done anything.
+                continue
             status = self.reader.status(w["uuid"])
             if status is None:
                 continue  # not visible (mirror lag) — try next tick
@@ -394,8 +413,12 @@ class SpokeCore:
                 self._retag_sender_copy(w)
 
     def _retag_sender_copy(self, w: dict) -> None:
-        """Swap the trigger tag for the delegated tag once delivery is
-        CONFIRMED (never before — the tag is the outbound retry queue)."""
+        """Swap the trigger tag for the delegated tag AND mark the sender's
+        own copy completed, once delivery is CONFIRMED (never before — the
+        tag is the outbound retry queue). D2 (2026-07-11): delegating IS the
+        action from the sender's side — their copy is done as soon as the
+        handoff is confirmed, symmetric on both directions ("either side"),
+        regardless of what the recipient later does with theirs."""
         current = self.reader.tags_of(w["uuid"])
         if current is None:
             return
@@ -403,8 +426,11 @@ class SpokeCore:
         new_tags = [t for t in current if t.lower() not in all_triggers]
         if DELEGATED_TAG not in new_tags:
             new_tags.append(DELEGATED_TAG)
-        if self.writer.set_tags(w["uuid"], new_tags):
-            self.state.mark_retagged(w["transfer_id"])
-            _log(f"retagged sender copy {w['uuid']} -> {DELEGATED_TAG}")
-        else:
+        if not self.writer.set_tags(w["uuid"], new_tags):
             _log(f"retag not yet verified for {w['uuid']}; will retry next tick")
+            return
+        if not self.writer.set_terminal(w["uuid"], "completed"):
+            _log(f"sender-side auto-complete not yet verified for {w['uuid']}; will retry next tick")
+            return
+        self.state.mark_retagged(w["transfer_id"])
+        _log(f"retagged + auto-completed sender copy {w['uuid']} -> {DELEGATED_TAG} (D2)")

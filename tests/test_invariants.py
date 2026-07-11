@@ -68,9 +68,15 @@ class InvariantSim(unittest.TestCase):
                 notes=f"notes {i}" * rng.randint(0, 3),
                 checklist=[f"c{j}" for j in range(rng.randint(0, 4))],
                 when=rng.choice([None, None, "2026-08-01", "someday"]))
-            # what the human on each side will eventually do
+            # what the human on each side will eventually do. "sender_revokes"
+            # (canceling your own still-open delegated copy) has no window
+            # anymore under D2 (2026-07-11): the sender's copy auto-completes
+            # the moment delivery is confirmed, well before a human could act
+            # on it, so that scenario is retired — see
+            # test_spoke_core.test_sender_cancel_after_auto_complete_does_not_cascade
+            # for the (now-inert) manual-cancel-after-auto-complete case.
             plan = rng.choice(["recipient_completes", "recipient_completes",
-                               "recipient_cancels", "sender_revokes"])
+                               "recipient_cancels"])
             expectations.append((sender, recipient, title, plan))
 
         acted = set()
@@ -97,12 +103,7 @@ class InvariantSim(unittest.TestCase):
                     continue
                 dst = [u for u, t in things[recipient].todos.items()
                        if t["title"] == title and "from-" + sender in t["tags"]]
-                if plan == "sender_revokes" and tick > 20:
-                    src = [u for u, t in things[sender].todos.items()
-                           if t["title"] == title]
-                    things[sender].cancel(src[0])
-                    acted.add(key)
-                elif plan != "sender_revokes" and dst:
+                if dst:
                     if plan == "recipient_completes":
                         things[recipient].complete(dst[0])
                     else:
@@ -146,20 +147,19 @@ class InvariantSim(unittest.TestCase):
 
             # NO-DUP: at most one live recipient copy
             copies = things[recipient].count_titled(payload_title)
-            if plan == "sender_revokes" and t["dst_uuid"] is None:
-                self.assertEqual(copies, 0, "revoked-before-apply never lands")
-            else:
-                self.assertEqual(copies, 1,
-                                 f"exactly one copy of {payload_title!r} on "
-                                 f"{recipient} (got {copies})")
+            self.assertEqual(copies, 1,
+                             f"exactly one copy of {payload_title!r} on "
+                             f"{recipient} (got {copies})")
 
-            # NO-LOSS: both sides consistent with the terminal state
+            # NO-LOSS + D2: sender's copy always completed at send,
+            # regardless of the recipient's eventual action; recipient's own
+            # copy reflects their real action.
             src_status = things[sender].todos[t["src_uuid"]]["status"]
-            expect = t["terminal"]
-            self.assertEqual(src_status, expect,
-                             f"sender copy of {payload_title} echoes {expect}")
+            self.assertEqual(src_status, "completed",
+                             f"sender copy of {payload_title} completed at send (D2)")
             if t["dst_uuid"]:
                 dst_status = things[recipient].todos[t["dst_uuid"]]["status"]
+                expect = t["terminal"]
                 self.assertEqual(dst_status, expect,
                                  f"recipient copy of {payload_title} is {expect}")
 

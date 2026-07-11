@@ -78,19 +78,28 @@ cannot diverge because the code is shared.
    (title + creation window + provenance tag), acks with the discovered
    UUID. The ledger now holds src_uuid ↔ dst_uuid.
 4. A's spoke sees the transfer reach `applied` via its watchlist and retags
-   A's copy: trigger tag → `👉 delegated` (waiting-for semantics).
-5. B completes it. B's spoke observes the terminal status on a watched
-   UUID, reports it; the hub records the terminal state (set-once) and
-   queues a `complete` echo delivery for A.
-6. A's spoke applies the echo (`completed=true` — non-destructive,
-   idempotent, closure visible in A's logbook), verifies, acks.
+   A's copy — trigger tag → `👉 delegated` — **and marks A's own copy
+   completed** (D2, amended 2026-07-11: delegating IS the action; A's part
+   is done the moment the handoff is confirmed, not whenever B eventually
+   finishes the task). Symmetric on both directions ("either side").
+5. B completes it (whenever they get to it — could be minutes or days
+   later). B's spoke observes the terminal status on a watched UUID,
+   reports it; the hub records the terminal state (set-once) and queues a
+   `complete`/`cancel` echo delivery for A.
+6. A's spoke applies the echo. This is a race-safety-net path, not the
+   normal path — by the time B acts, A's copy is already completed from
+   step 4. It only does real work if B resolves faster than A's own next
+   tick (the transfer's terminal gets set before A ever retags, so step 4
+   never fires for it); even then the echo unconditionally lands on
+   **completed**, never `canceled` — D2 has no downgrade path.
 
-Reverse direction is symmetric. Sender revocation: if the *sender*
-completes/cancels their still-delegated copy, the terminal state echoes to
-the recipient the same way — and if it happens before the recipient ever
-applied the create, the create is skipped outright. Race rule: terminal
-state is set-once at the hub; **completed beats canceled** (work done wins),
-up until the canceled echo has already been delivered.
+Reverse direction is symmetric. There is no "sender revocation" anymore —
+the old behavior (canceling your own still-open delegated copy to pull it
+back before the recipient acts) has no window under D2, since the sender's
+copy is completed within one tick of confirmed delivery, well before a human
+could act on it. A stray cancel on an already-completed sender copy is
+inert: the retagged watch entry is permanently skipped (never re-observed),
+so it can't cascade to the recipient's copy.
 
 ### 3.3 Spoke tick (serialized, on a configurable interval — 5s as deployed
 2026-07-11, was 60s)
@@ -106,9 +115,11 @@ tick():
                create  → journal intent → apply → correlate → ack{dst_uuid}
                terminal→ apply completed/canceled → verify → ack
   observe:   watched uuids at terminal state locally → report
-             (completed / canceled / trashed→canceled)
-  retag:     sender-side transfers that reached `applied` →
-             trigger tag → 👉 delegated (once)
+             (completed / canceled / trashed→canceled) — skipped for a
+             sender-role uuid once already retagged (that "completed" is
+             our own doing, not a fresh signal to relay)
+  retag:     sender-side transfers that reached `applied` (once) →
+             trigger tag → 👉 delegated AND mark completed (D2)
 ```
 
 Crash safety: the journal (a tiny local SQLite) records create-apply intent

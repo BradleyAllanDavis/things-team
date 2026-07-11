@@ -131,36 +131,49 @@ class TestInboundCrashSafety(SpokeCoreTestBase):
 
 
 class TestRoundTrip(SpokeCoreTestBase):
-    def test_full_completion_round_trip(self):
+    def test_sender_completes_at_send_not_at_recipient_completion(self):
+        # D2 (2026-07-11): delegating IS the action — sender's copy is done
+        # the moment delivery is confirmed, not when the recipient finishes.
         src = self.b_things.add("deliver", tags=["jill"])
         self.settle(2)
-        # sender copy retagged to delegated after confirmed apply
         self.assertIn(DELEGATED_TAG, self.b_things.todos[src]["tags"])
         self.assertNotIn("jill", self.b_things.todos[src]["tags"])
-        # jill completes her copy
+        self.assertEqual(self.b_things.todos[src]["status"], "completed")
+        # jill's copy is still open — completing sender's copy does NOT
+        # cascade to the recipient
         [dst] = [u for u, t in self.j_things.todos.items() if t["title"] == "deliver"]
+        self.assertEqual(self.j_things.todos[dst]["status"], "open")
+        # jill completes her copy for real; transfer resolves, watchlist clears
         self.j_things.complete(dst)
         self.settle(3)
-        # bradley's copy marked completed (D2), transfer resolved
-        self.assertEqual(self.b_things.todos[src]["status"], "completed")
+        self.assertEqual(self.b_things.todos[src]["status"], "completed")  # unchanged
         self.assertEqual(self.ledger.watchlist(
             self.b_hub.inner.principal), [])
 
-    def test_recipient_trash_echoes_cancel(self):
+    def test_recipient_trash_does_not_uncomplete_sender_copy(self):
         src = self.b_things.add("unwanted", tags=["jill"])
         self.settle(2)
+        self.assertEqual(self.b_things.todos[src]["status"], "completed")  # D2
         [dst] = [u for u, t in self.j_things.todos.items() if t["title"] == "unwanted"]
         self.j_things.trash(dst)
         self.settle(3)
-        self.assertEqual(self.b_things.todos[src]["status"], "canceled")
+        self.assertTrue(self.j_things.todos[dst]["trashed"])  # recipient's own action stands
+        self.assertEqual(self.b_things.todos[src]["status"], "completed")  # sender NOT downgraded
 
-    def test_sender_revocation_cancels_recipient_copy(self):
+    def test_sender_cancel_after_auto_complete_does_not_cascade(self):
+        # Old "sender revocation" behavior (cancel your still-open delegated
+        # copy to pull it back) has no window anymore under D2 — the sender's
+        # copy is already completed by the time this could happen. Manually
+        # canceling it afterward is a no-op from the sync system's view: the
+        # retagged sender-role watch entry is permanently skipped, so it must
+        # never propagate to the recipient's copy.
         src = self.b_things.add("nvm", tags=["jill"])
         self.settle(2)
+        self.assertEqual(self.b_things.todos[src]["status"], "completed")
         self.b_things.cancel(src)
         self.settle(3)
         [dst] = [u for u, t in self.j_things.todos.items() if t["title"] == "nvm"]
-        self.assertEqual(self.j_things.todos[dst]["status"], "canceled")
+        self.assertEqual(self.j_things.todos[dst]["status"], "open")
 
     def test_reverse_direction_jill_to_bradley(self):
         src = self.j_things.add("pick up kids", tags=["bradley"], when="2026-07-12")
@@ -169,9 +182,11 @@ class TestRoundTrip(SpokeCoreTestBase):
                  if t["title"] == "pick up kids"]
         self.assertEqual(self.b_things.todos[dst]["tags"], ["from-jill"])
         self.assertEqual(self.b_things.todos[dst]["when"], "2026-07-12")  # honored
+        # D2 symmetric ("either side"): jill's sender copy already completed
+        self.assertEqual(self.j_things.todos[src]["status"], "completed")
         self.b_things.complete(dst)
         self.settle(3)
-        self.assertEqual(self.j_things.todos[src]["status"], "completed")
+        self.assertEqual(self.j_things.todos[src]["status"], "completed")  # unchanged
 
 
 if __name__ == "__main__":
