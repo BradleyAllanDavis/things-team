@@ -1,0 +1,373 @@
+"""things-team spoke core — the sync tick, backend-agnostic.
+
+ONE core, TWO deployments (DESIGN.md amendment, 2026-07-11):
+
+- The hub's in-process gateway worker (Bradley's side): reader = the
+  Syncthing-synced Things DB mirror on the hub host, writer = the
+  things-gateway queue (HTTP), hub client = direct ledger calls.
+- Jill's MacBook Air LaunchAgent: reader = her local things-mirror
+  snapshot, writer = local `things:///json` opens, hub client = HTTP.
+
+The tick (DESIGN.md §3.2), serialized, at-least-once end to end:
+
+  1. outbound  — todos carrying a configured trigger tag, not known-sent
+                 (local cache; miss ⇒ re-push, the hub dedupes) → push.
+                 Refusals (repeating todo, >100 checklist items) are
+                 logged loudly and left tagged — visible, never silent.
+  2. inbound   — leased deliveries, applied ONE AT A TIME (makes
+                 read-after-write correlation unambiguous):
+                 create → journal intent → write → correlate uuid →
+                 ack{dst_uuid}; terminal → write completed/canceled →
+                 verify → ack.
+  3. observe   — watched uuids whose local copy hit a terminal state →
+                 report (completed / canceled / trashed→canceled).
+  4. retag     — sender-side: transfers that reached `applied` swap the
+                 trigger tag for the delegated tag (waiting-for UX,
+                 doubles as the delivery receipt).
+
+Crash safety: a tiny local SQLite journal records create-apply intent
+BEFORE firing the write. On restart with an open journal entry the spoke
+re-runs correlation first and re-acks instead of re-firing — the residual
+double-failure window (journal loss + lost ack) degrades to one visible
+duplicate in the recipient's Inbox, recoverable by a human, never silent.
+
+Python 3.9-compatible (Jill's Air runs Apple's /usr/bin/python3), stdlib only.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import sys
+import time
+
+DELEGATED_TAG = "👉 delegated"
+ENVELOPE_SCHEMA = "things-team.todo/1"
+MAX_CHECKLIST = 100
+MAX_NOTES = 10000
+
+_STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sent_cache (
+  src_uuid   TEXT NOT NULL,
+  rev        INTEGER NOT NULL,
+  transfer_id TEXT,
+  pushed_at  REAL NOT NULL,
+  PRIMARY KEY (src_uuid, rev)
+);
+CREATE TABLE IF NOT EXISTS journal (
+  delivery_id TEXT PRIMARY KEY,
+  transfer_id TEXT,
+  title       TEXT,
+  provenance_tag TEXT,
+  fired_at    REAL NOT NULL,
+  dst_uuid    TEXT
+);
+CREATE TABLE IF NOT EXISTS retagged (
+  transfer_id TEXT PRIMARY KEY,
+  retagged_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS observed (
+  transfer_id TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,
+  observed_at REAL NOT NULL
+);
+"""
+
+
+def _log(msg: str) -> None:
+    print(f"[things-team-spoke] {msg}", file=sys.stderr, flush=True)
+
+
+class SpokeState:
+    """Machine-local runtime state only — everything durable lives in the
+    hub ledger or in Things itself."""
+
+    def __init__(self, path: str):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(_STATE_SCHEMA)
+        self.conn.commit()
+
+    def known_sent(self, src_uuid: str, rev: int = 1) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM sent_cache WHERE src_uuid=? AND rev=?",
+            (src_uuid, rev)).fetchone() is not None
+
+    def mark_sent(self, src_uuid: str, rev: int, transfer_id: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO sent_cache (src_uuid, rev, transfer_id,"
+                " pushed_at) VALUES (?,?,?,?)",
+                (src_uuid, rev, transfer_id, time.time()))
+
+    def journal_open(self, delivery_id: str):
+        return self.conn.execute(
+            "SELECT * FROM journal WHERE delivery_id=?", (delivery_id,)).fetchone()
+
+    def journal_intent(self, delivery_id: str, transfer_id: str, title: str,
+                       provenance_tag: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO journal (delivery_id, transfer_id, title,"
+                " provenance_tag, fired_at) VALUES (?,?,?,?,?)",
+                (delivery_id, transfer_id, title, provenance_tag, time.time()))
+
+    def journal_close(self, delivery_id: str, dst_uuid: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE journal SET dst_uuid=? WHERE delivery_id=?",
+                (dst_uuid, delivery_id))
+
+    def is_retagged(self, transfer_id: str) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM retagged WHERE transfer_id=?", (transfer_id,)).fetchone() is not None
+
+    def mark_retagged(self, transfer_id: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO retagged (transfer_id, retagged_at)"
+                " VALUES (?,?)", (transfer_id, time.time()))
+
+    def last_observed(self, transfer_id: str):
+        row = self.conn.execute(
+            "SELECT state FROM observed WHERE transfer_id=?", (transfer_id,)).fetchone()
+        return row[0] if row else None
+
+    def mark_observed(self, transfer_id: str, state: str) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO observed (transfer_id, state, observed_at)"
+                " VALUES (?,?,?)", (transfer_id, state, time.time()))
+
+
+class SpokeCore:
+    """The tick. All Things access via `reader`/`writer`, all hub access
+    via `hub` — interfaces documented in things_db.py / writer_*.py /
+    hub client modules; tests substitute in-memory fakes.
+
+    reader:
+      outbound_candidates(trigger_tags) -> [snapshot dict]
+      status(uuid) -> {"status": open|completed|canceled, "trashed": bool} | None
+      correlate(title, created_after, provenance_tag, exclude_uuids) -> uuid|None
+      tags_of(uuid) -> [tag titles]
+      refresh() -> None (freshen the mirror if the backend can)
+    writer:
+      create(envelope, provenance_tag, extra) -> None (fire-and-verify inside)
+      set_terminal(uuid, state) -> bool          (True = verified/applied)
+      set_tags(uuid, tags) -> bool
+    hub:
+      push_transfer(to, src_uuid, payload, rev) -> {id, deduped, terminal, ...}
+      deliveries(limit) -> [delivery]
+      ack(delivery_id, dst_uuid=None) / nack(delivery_id, error)
+      watch() -> [{transfer_id, uuid, role, state}]
+      observe(transfer_id, state) -> dict
+    """
+
+    def __init__(self, reader, writer, hub, state: SpokeState,
+                 trigger_tags: dict, correlate_timeout: float = 240.0,
+                 correlate_interval: float = 5.0):
+        self.reader = reader
+        self.writer = writer
+        self.hub = hub
+        self.state = state
+        # {recipient_handle: [exact tag titles]} — EXACT titles, matched
+        # case-insensitively but never by substring (a pre-existing
+        # `Jillian 👩🏻‍🦰` tag must not trigger delegation — 2026-07-11
+        # review amendment).
+        self.trigger_tags = {
+            handle: [t.lower() for t in tags]
+            for handle, tags in trigger_tags.items()
+        }
+        self.correlate_timeout = correlate_timeout
+        self.correlate_interval = correlate_interval
+
+    # -- tick ------------------------------------------------------------
+    def tick(self) -> None:
+        self.reader.refresh()
+        self._outbound()
+        self._inbound()
+        self._observe_and_retag()
+
+    # -- 1. outbound -------------------------------------------------------
+    def _outbound(self) -> None:
+        all_triggers = {t: h for h, tags in self.trigger_tags.items() for t in tags}
+        if not all_triggers:
+            return
+        for cand in self.reader.outbound_candidates(sorted(all_triggers)):
+            src_uuid = cand["uuid"]
+            if self.state.known_sent(src_uuid):
+                continue
+            matched = [t for t in cand.get("tags", []) if t.lower() in all_triggers]
+            if not matched:
+                continue
+            to_handle = all_triggers[matched[0].lower()]
+            refusal = self._refusal(cand)
+            if refusal:
+                _log(f"REFUSED outbound {src_uuid} ({cand.get('title', '')!r}): "
+                     f"{refusal} — item left tagged and untouched")
+                continue
+            payload = self._envelope(cand, strip_tags=matched)
+            try:
+                rec = self.hub.push_transfer(to_handle, src_uuid, payload, rev=1)
+            except Exception as exc:  # hub down: Things holds outbound intent
+                _log(f"push failed for {src_uuid}: {exc}; will retry next tick")
+                continue
+            if rec.get("deduped") and rec.get("terminal"):
+                _log(f"{src_uuid} was already delegated once and resolved "
+                     f"({rec['terminal']}); re-delegation of the same todo is a "
+                     f"v2 seam (rev>1) — ignoring. Duplicate the todo to re-send.")
+            self.state.mark_sent(src_uuid, 1, rec.get("id"))
+
+    @staticmethod
+    def _refusal(cand: dict) -> str:
+        if cand.get("is_repeating"):
+            return "repeating todos can't be completed remotely (URL-scheme limit)"
+        if len(cand.get("checklist", [])) > MAX_CHECKLIST:
+            return f"checklist exceeds {MAX_CHECKLIST} items (URL-scheme limit)"
+        if cand.get("type", 0) != 0:
+            return "projects/headings are not syncable in v1 (todos only)"
+        return ""
+
+    def _envelope(self, cand: dict, strip_tags) -> dict:
+        # ALL tags are dropped in v1 — payload tags because the recipient's
+        # vocabulary is theirs (the URL scheme would silently ignore unknown
+        # tags anyway), control tags (strip_tags, the delegated tag) because
+        # they must never cross the wire even as metadata.
+        del strip_tags
+        notes = cand.get("notes") or ""
+        return {
+            "schema": ENVELOPE_SCHEMA,
+            "title": cand.get("title") or "",
+            "notes": notes[:MAX_NOTES],
+            "checklist": [c for c in cand.get("checklist", [])][:MAX_CHECKLIST],
+            "when": cand.get("when"),          # None → recipient's real Inbox (D3)
+            "deadline": cand.get("deadline"),  # date-only or None
+            "context_url": None,               # reserved seam, null in v1
+        }
+
+    # -- 2. inbound ---------------------------------------------------------
+    def _inbound(self) -> None:
+        try:
+            deliveries = self.hub.deliveries(limit=10)
+        except Exception as exc:
+            _log(f"delivery poll failed: {exc}")
+            return
+        for d in deliveries:
+            try:
+                if d["kind"] == "create":
+                    self._apply_create(d)
+                else:
+                    self._apply_terminal(d)
+            except Exception as exc:  # noqa: BLE001 — nack and move on
+                _log(f"apply failed for delivery {d.get('id')}: {exc}")
+                try:
+                    self.hub.nack(d["id"], str(exc))
+                except Exception:
+                    pass  # lease expiry will requeue
+
+    def _apply_create(self, d: dict) -> None:
+        payload = d["payload"]
+        provenance = d["provenance_tag"]
+        journal = self.state.journal_open(d["id"])
+        t0 = time.time()
+        if journal is None:
+            # journal intent BEFORE firing — crash-restart re-correlates
+            # instead of re-firing (no-dup).
+            self.state.journal_intent(d["id"], d["transfer_id"],
+                                      payload["title"], provenance)
+            # idem_key = delivery id: if the journal is lost and the create
+            # re-fires, an idempotency-aware writer (the queue) still
+            # collapses it to one todo.
+            self.writer.create(payload, provenance, idem_key=d["id"])
+        else:
+            t0 = journal["fired_at"]
+            if journal["dst_uuid"]:  # lost-ack redelivery: just re-ack
+                self.hub.ack(d["id"], dst_uuid=journal["dst_uuid"])
+                return
+            _log(f"open journal entry for delivery {d['id']} — re-correlating,"
+                 " not re-firing")
+        dst_uuid = self._correlate(payload["title"], t0, provenance)
+        if dst_uuid is None:
+            raise RuntimeError(
+                f"correlation timeout: created todo {payload['title']!r} not"
+                f" found in local DB within {self.correlate_timeout}s")
+        self.state.journal_close(d["id"], dst_uuid)
+        self.hub.ack(d["id"], dst_uuid=dst_uuid)
+        _log(f"applied create {d['transfer_id']} -> {dst_uuid}")
+
+    def _correlate(self, title: str, created_after: float, provenance_tag: str):
+        """Read-after-write uuid discovery, bounded. Excludes uuids the hub
+        already knows (the reader gets a fresh exclusion set per call via
+        its own ledger/journal knowledge is NOT assumed — exclusion here is
+        only what this spoke journaled, the natural-key window does the rest)."""
+        exclude = set(
+            row[0] for row in self.state.conn.execute(
+                "SELECT dst_uuid FROM journal WHERE dst_uuid IS NOT NULL")
+        )
+        deadline = time.time() + self.correlate_timeout
+        # small clock-skew allowance: mirror timestamps come from another machine
+        window_start = created_after - 120
+        while True:
+            self.reader.refresh()
+            found = self.reader.correlate(title, window_start, provenance_tag, exclude)
+            if found:
+                return found
+            if time.time() >= deadline:
+                return None
+            time.sleep(self.correlate_interval)
+
+    def _apply_terminal(self, d: dict) -> None:
+        state = "completed" if d["kind"] == "complete" else "canceled"
+        ok = self.writer.set_terminal(d["uuid"], state)
+        if not ok:
+            raise RuntimeError(f"terminal apply not verified for {d['uuid']}")
+        self.hub.ack(d["id"])
+        _log(f"applied {state} echo on {d['uuid']}")
+
+    # -- 3+4. observations + sender retag -----------------------------------
+    def _observe_and_retag(self) -> None:
+        try:
+            watch = self.hub.watch()
+        except Exception as exc:
+            _log(f"watch poll failed: {exc}")
+            return
+        for w in watch:
+            status = self.reader.status(w["uuid"])
+            if status is None:
+                continue  # not visible (mirror lag) — try next tick
+            terminal = None
+            if status.get("trashed"):
+                terminal = "canceled"
+            elif status.get("status") == "completed":
+                terminal = "completed"
+            elif status.get("status") == "canceled":
+                terminal = "canceled"
+            if terminal and self.state.last_observed(w["transfer_id"]) != terminal:
+                try:
+                    self.hub.observe(w["transfer_id"], terminal)
+                    self.state.mark_observed(w["transfer_id"], terminal)
+                    _log(f"observed {terminal} on {w['role']} copy {w['uuid']}")
+                except Exception as exc:
+                    _log(f"observation failed for {w['transfer_id']}: {exc}")
+                continue
+            if (w["role"] == "sender" and w["state"] == "applied"
+                    and not self.state.is_retagged(w["transfer_id"])):
+                self._retag_sender_copy(w)
+
+    def _retag_sender_copy(self, w: dict) -> None:
+        """Swap the trigger tag for the delegated tag once delivery is
+        CONFIRMED (never before — the tag is the outbound retry queue)."""
+        current = self.reader.tags_of(w["uuid"])
+        if current is None:
+            return
+        all_triggers = set(t for tags in self.trigger_tags.values() for t in tags)
+        new_tags = [t for t in current if t.lower() not in all_triggers]
+        if DELEGATED_TAG not in new_tags:
+            new_tags.append(DELEGATED_TAG)
+        if self.writer.set_tags(w["uuid"], new_tags):
+            self.state.mark_retagged(w["transfer_id"])
+            _log(f"retagged sender copy {w['uuid']} -> {DELEGATED_TAG}")
+        else:
+            _log(f"retag not yet verified for {w['uuid']}; will retry next tick")

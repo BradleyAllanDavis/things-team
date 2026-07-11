@@ -1,0 +1,120 @@
+# Things Team — wire protocol (v1)
+
+All endpoints under `/v1`, JSON bodies, `Authorization: Bearer <device-token>`.
+Auth resolves to a Principal (tenant, member, device, capabilities); no
+endpoint ever accepts a tenant or member identifier *for* the caller — who
+you are always comes from auth.
+
+## Envelope — `things-team.todo/1`
+
+```json
+{
+  "schema":      "things-team.todo/1",
+  "title":       "string, required",
+  "notes":       "string, byte-identical, ≤ 10000",
+  "checklist":   ["item title", "…"],
+  "when":        "yyyy-mm-dd | someday | null",
+  "deadline":    "yyyy-mm-dd | null",
+  "context_url": null
+}
+```
+
+`context_url` is a reserved seam (null in v1). No tags in the payload —
+control tags never cross the wire, payload tags are dropped in v1, and the
+provenance tag is computed by the hub (`from-<sender-handle>`), not carried.
+
+## Transfer state machine
+
+```
+created ──(create delivery acked with dst_uuid)──▶ applied
+   │                                                  │
+   │ (sender revokes before apply:                    │ (either side observes
+   │  create skipped, resolved)                       ▼  terminal on their copy)
+   └──────────────────────────────▶ terminal ∈ {completed, canceled}
+                                        │ (echo delivery to the other
+                                        ▼  party acked)
+                                    resolved
+```
+
+Terminal is **set-once**, with one sanctioned upgrade: `canceled` →
+`completed` (work done wins), permitted only while the cancel echo hasn't
+been delivered. A `canceled` arriving after `completed` is ignored.
+
+## Delivery state machine
+
+```
+queued ──(GET /v1/deliveries)──▶ leased ──(ack)──▶ done
+  ▲                                 │
+  └──(nack, or lease expiry)────────┘
+```
+
+Ordering guards enforced by the hub: a terminal delivery is never handed to
+the recipient before the transfer has a `dst_uuid`; a terminal echo replaces
+a still-queued create when the sender revoked first (the create is marked
+done/skipped and the transfer resolves).
+
+## Endpoints
+
+### POST /v1/transfers — requires `can_send`
+```json
+{"to": "jill", "src_uuid": "THINGS-UUID", "rev": 1, "payload": {…envelope…}}
+```
+`201` with the transfer record, or `200` with `"deduped": true` on replay
+(idempotent on `(from_member, src_uuid, rev)`). Errors: `403` (capability),
+`404` (unknown recipient handle *in the caller's tenant*), `400`
+(self-delegation, missing fields).
+
+### GET /v1/deliveries?limit=N&wait=S — requires `can_receive`
+Leases up to N deliveries for the calling member (long-polls up to S≤30s).
+Lease TTL 300s; expiry re-queues. Each entry:
+```json
+{"id": "…", "transfer_id": "…", "kind": "create", "attempts": 1,
+ "payload": {…envelope…}, "from": "bradley", "provenance_tag": "from-bradley"}
+```
+or, for terminal kinds:
+```json
+{"id": "…", "transfer_id": "…", "kind": "complete|cancel", "attempts": 1,
+ "uuid": "the caller's OWN copy's Things uuid"}
+```
+
+### POST /v1/deliveries/{id}/ack
+Create kind: `{"dst_uuid": "…"}` (required — this is what closes the uuid
+mapping). Terminal kinds: `{}`. Idempotent; re-acking a done delivery
+returns `{"ok": true, "already_done": true}`.
+
+### POST /v1/deliveries/{id}/nack
+`{"error": "…"}` — re-queues immediately (client paces retries by tick).
+
+### GET /v1/watch
+Open (non-terminal, non-resolved) transfers the caller is party to:
+```json
+{"watch": [{"transfer_id": "…", "uuid": "their own copy's uuid",
+            "role": "sender|recipient", "state": "created|applied"}]}
+```
+Senders use `state: "applied"` as the retag (delivery-receipt) signal.
+
+### POST /v1/observations
+`{"transfer_id": "…", "state": "completed|canceled"}` — report a terminal
+state seen on a watched copy (trashed reports as `canceled`). Set-once
+semantics above; always returns the winning terminal.
+
+### GET /v1/health
+`{"ok": true, "pending_deliveries": n, "open_transfers": n}`
+
+### Admin (requires `can_admin`; scoped to the caller's tenant)
+- `POST /v1/admin/tenants {"name"}` — bootstrap-only in practice
+- `POST /v1/admin/members {"handle", "display_name", "can_send", "can_receive", "can_admin"}`
+- `POST /v1/admin/devices {"member_id", "name"}` → `{"token"}` **shown once**
+- `POST /v1/admin/devices/{id}/revoke`
+
+Deployed provisioning is declarative (hub bootstrap spec + token files); the
+admin API is the runtime escape hatch.
+
+## Delivery semantics
+
+At-least-once end to end. Every retry path is absorbed by an idempotency
+anchor: transfer replays by the natural key, delivery queueing by
+`(transfer, kind, member)`, applies by the spoke journal (re-correlate,
+don't re-fire), acks by done-state no-ops, observations by set-once
+terminal. The one residual (spoke journal lost AND ack lost in the same
+window) degrades to a single visible duplicate on the recipient side.
