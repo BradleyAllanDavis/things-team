@@ -160,6 +160,44 @@ hashes; rotation = new file + restart). Tenant isolation is structural:
 every table roots at tenant_id, every query passes through the principal's
 tenant, and no API accepts a tenant parameter from a client.
 
+## 6b. Push transport (delivery latency)
+
+The system is asymmetric: of a spoke's three tick duties, only **inbound**
+("the hub has a delivery for me") is a genuine server→client push problem —
+outbound and observe read the sender's own local mirror and are gated by local
+freshness, not a hub round trip. So there is exactly one async hub→client
+event class, and long-poll expresses it completely; no WebSocket/SSE (they'd
+add framing + proxy-idle-timeout keepalive for zero capability long-poll lacks
+here, and long-poll survives Cloudflare Tunnel/Tailscale/proxying untouched at
+`wait≤30s`). Full rationale: the push-transport design doc.
+
+- **The delivery condition variable.** `Ledger` holds a `threading.Condition`
+  with its own lock (never the data `RLock`) and a monotonic generation
+  counter. Every code path that commits a *leasable* (`queued`) delivery —
+  `push_transfer`, `ack_delivery`'s mid-flight-revoke echo, `observe`/
+  `_queue_echo` — calls `_signal_delivery()` **after** the transaction commits.
+  A waiter parked in `wait_for_delivery(timeout)` wakes on the generation
+  change (or times out). Signal-after-commit is load-bearing: a waiter woken
+  while the write is still uncommitted could re-query, miss the row, re-park,
+  and reintroduce a latency floor.
+- **One primitive, two consumers.** The HTTP `/v1/deliveries?wait=` handler
+  parks on the CV between `lease_deliveries` re-checks (no 0.5s busy-poll);
+  the in-process gateway worker's inbound loop calls `wait_for_delivery`
+  directly. Same push for Jill (HTTP) and Bradley (in-process).
+- **Phase decoupling.** A held inbound long-poll would starve outbound/observe
+  in one serial tick, so `SpokeCore.tick()` is split into `tick_local()`
+  (refresh + outbound + observe/retag) and `tick_inbound()` (lease + apply).
+  LAN spokes run Option 1 (one loop: local, then a short held poll woken early
+  by the CV — keeps the single-threaded, invariant-tested spoke). The gateway
+  runs Option 2 (two loops: inbound parks on the CV; local is driven by the
+  Syncthing-fed mirror's mtime with a `tick_seconds` floor) — its shared
+  `SpokeState` is made thread-safe by a private `RLock` around every accessor.
+- **Measured:** push-commit → held long-poll return is ~2ms over the real
+  `ThreadingHTTPServer` (was a 0–500ms busy-poll floor plus the spoke's 60s
+  tick). Per-phase sync logic is byte-identical, so the invariant suite still
+  governs correctness — the concurrency is confined to the driver/transport
+  layer and the isolated CV.
+
 ## 7. Quality bar
 
 - Ledger tests: push idempotency under replay, lease expiry/re-queue,

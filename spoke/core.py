@@ -40,6 +40,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 
 DELEGATED_TAG = "👉 delegated"
@@ -81,62 +82,82 @@ def _log(msg: str) -> None:
 
 class SpokeState:
     """Machine-local runtime state only — everything durable lives in the
-    hub ledger or in Things itself."""
+    hub ledger or in Things itself.
+
+    One sqlite connection, opened check_same_thread=False. The gateway's
+    two-loop driver (inbound + local, §6) touches this from two threads, so
+    every accessor is guarded by a private RLock — the ops are tiny and the
+    tables near-disjoint, so contention is nil; single-loop spokes (Jill)
+    take an uncontended lock and pay nothing. This is the ONLY concurrency
+    added to the state layer; the sync-core methods themselves are unchanged."""
 
     def __init__(self, path: str):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_STATE_SCHEMA)
         self.conn.commit()
 
     def known_sent(self, src_uuid: str, rev: int = 1) -> bool:
-        return self.conn.execute(
-            "SELECT 1 FROM sent_cache WHERE src_uuid=? AND rev=?",
-            (src_uuid, rev)).fetchone() is not None
+        with self._lock:
+            return self.conn.execute(
+                "SELECT 1 FROM sent_cache WHERE src_uuid=? AND rev=?",
+                (src_uuid, rev)).fetchone() is not None
 
     def mark_sent(self, src_uuid: str, rev: int, transfer_id: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO sent_cache (src_uuid, rev, transfer_id,"
                 " pushed_at) VALUES (?,?,?,?)",
                 (src_uuid, rev, transfer_id, time.time()))
 
     def journal_open(self, delivery_id: str):
-        return self.conn.execute(
-            "SELECT * FROM journal WHERE delivery_id=?", (delivery_id,)).fetchone()
+        with self._lock:
+            return self.conn.execute(
+                "SELECT * FROM journal WHERE delivery_id=?", (delivery_id,)).fetchone()
 
     def journal_intent(self, delivery_id: str, transfer_id: str, title: str,
                        provenance_tag: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO journal (delivery_id, transfer_id, title,"
                 " provenance_tag, fired_at) VALUES (?,?,?,?,?)",
                 (delivery_id, transfer_id, title, provenance_tag, time.time()))
 
     def journal_close(self, delivery_id: str, dst_uuid: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 "UPDATE journal SET dst_uuid=? WHERE delivery_id=?",
                 (dst_uuid, delivery_id))
 
+    def journaled_dst_uuids(self) -> set:
+        """Every dst_uuid this spoke has already correlated — the exclusion
+        set for read-after-write correlation. A method (not a raw conn read
+        in core) so the shared connection is only ever touched under lock."""
+        with self._lock:
+            return set(row[0] for row in self.conn.execute(
+                "SELECT dst_uuid FROM journal WHERE dst_uuid IS NOT NULL"))
+
     def is_retagged(self, transfer_id: str) -> bool:
-        return self.conn.execute(
-            "SELECT 1 FROM retagged WHERE transfer_id=?", (transfer_id,)).fetchone() is not None
+        with self._lock:
+            return self.conn.execute(
+                "SELECT 1 FROM retagged WHERE transfer_id=?", (transfer_id,)).fetchone() is not None
 
     def mark_retagged(self, transfer_id: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO retagged (transfer_id, retagged_at)"
                 " VALUES (?,?)", (transfer_id, time.time()))
 
     def last_observed(self, transfer_id: str):
-        row = self.conn.execute(
-            "SELECT state FROM observed WHERE transfer_id=?", (transfer_id,)).fetchone()
-        return row[0] if row else None
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT state FROM observed WHERE transfer_id=?", (transfer_id,)).fetchone()
+            return row[0] if row else None
 
     def mark_observed(self, transfer_id: str, state: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO observed (transfer_id, state, observed_at)"
                 " VALUES (?,?,?)", (transfer_id, state, time.time()))
@@ -185,10 +206,29 @@ class SpokeCore:
 
     # -- tick ------------------------------------------------------------
     def tick(self) -> None:
+        """Serialized full tick — one pass over all four phases in order.
+        Kept intact as the composition the invariant suite drives; the
+        deployed drivers now call the two split phases below instead, so a
+        held inbound long-poll can't starve outbound/observe (§5)."""
         self.reader.refresh()
         self._outbound()
         self._inbound()
         self._observe_and_retag()
+
+    def tick_local(self) -> None:
+        """Local-mirror-driven phases: detect newly-tagged outbound todos and
+        observe/retag watched copies. Gated by local freshness, never by a hub
+        round trip — driven off a timer or the mirror's mtime, not the inbound
+        poll. Byte-identical phase logic to tick()."""
+        self.reader.refresh()
+        self._outbound()
+        self._observe_and_retag()
+
+    def tick_inbound(self) -> None:
+        """Hub-driven phase: lease + apply deliveries. This is the leg that
+        blocks on the held long-poll (HTTP spoke) or the delivery CV (gateway),
+        decoupled from tick_local so a long wait never starves the local work."""
+        self._inbound()
 
     # -- 1. outbound -------------------------------------------------------
     def _outbound(self) -> None:
@@ -302,10 +342,7 @@ class SpokeCore:
         already knows (the reader gets a fresh exclusion set per call via
         its own ledger/journal knowledge is NOT assumed — exclusion here is
         only what this spoke journaled, the natural-key window does the rest)."""
-        exclude = set(
-            row[0] for row in self.state.conn.execute(
-                "SELECT dst_uuid FROM journal WHERE dst_uuid IS NOT NULL")
-        )
+        exclude = self.state.journaled_dst_uuids()
         deadline = time.time() + self.correlate_timeout
         # small clock-skew allowance: mirror timestamps come from another machine
         window_start = created_after - 120

@@ -154,12 +154,43 @@ def run_gateway_worker(ledger: Ledger, tenant_name: str) -> None:
     )
     _log(f"gateway worker up: member={handle}, triggers={trigger_tags}, "
          f"mirror={mirror_path}, queue={queue_url}")
+
+    # Option 2 (push-transport §6): the gateway is always-on and not battery-
+    # bound, so it runs two loops instead of one serial tick. Inbound parks on
+    # the ledger's delivery CV IN-PROCESS (same push primitive the HTTP handler
+    # uses for Jill) — the moment an echo/create is committed for Bradley, it
+    # wakes instead of waiting out a 60s sleep (this is what kills the 69s echo).
+    # Local is driven by the Syncthing-fed mirror's mtime (a plain os.stat loop
+    # — no TCC/FDA/kqueue on Linux), with a tick_seconds floor so hub-watch-
+    # driven observe/retag still runs even when the mirror file is unchanged.
+    INBOUND_CV_CAP = 20.0  # max CV park; bounds lease-expiry re-check when idle
+
+    def inbound_loop() -> None:
+        while True:
+            try:
+                ledger.wait_for_delivery(INBOUND_CV_CAP)
+                core.tick_inbound()
+            except Exception as exc:  # noqa: BLE001 — never kill the hub
+                _log(f"gateway inbound error: {exc!r}")
+                time.sleep(min(tick_seconds, 5))
+
+    threading.Thread(target=inbound_loop, daemon=True,
+                     name="gateway-inbound").start()
+
+    last_mtime = -1.0
+    last_local = 0.0
     while True:
         try:
-            core.tick()
+            mtime = (os.path.getmtime(mirror_path)
+                     if os.path.exists(mirror_path) else 0.0)
+            now = time.time()
+            if mtime != last_mtime or (now - last_local) >= tick_seconds:
+                last_mtime = mtime
+                last_local = now
+                core.tick_local()
         except Exception as exc:  # noqa: BLE001 — a bad tick never kills the hub
-            _log(f"gateway tick error: {exc!r}")
-        time.sleep(tick_seconds)
+            _log(f"gateway local error: {exc!r}")
+        time.sleep(1)
 
 
 def main() -> None:

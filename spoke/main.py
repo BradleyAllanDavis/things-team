@@ -73,18 +73,30 @@ def main() -> None:
         trigger_tags=cfg.get("trigger_tags", {}))
 
     tick_seconds = float(cfg.get("tick_seconds", 60))
-    _log(f"spoke up: hub={cfg['hub_url']}, triggers={cfg.get('trigger_tags')}")
+    poll_wait = float(cfg.get("poll_wait", 0.0))
+    _log(f"spoke up: hub={cfg['hub_url']}, triggers={cfg.get('trigger_tags')}, "
+         f"poll_wait={poll_wait}")
     backoff = 5
+    # Option 1 (push-transport §5): one loop, local phases then a SHORT held
+    # inbound long-poll. The hub's delivery CV wakes the poll the instant a
+    # delivery lands (near-push inbound), while tick_local runs every ≤poll_wait
+    # (outbound/observe stay responsive) — a long held poll in one serial tick
+    # would starve them. Keeps the provably-correct single-threaded spoke.
     while True:
         try:
-            core.tick()
+            core.tick_local()
+            core.tick_inbound()   # held ≤poll_wait, woken early by the hub CV
             backoff = 5
         except Exception as exc:  # noqa: BLE001 — keep the agent alive
             _log(f"tick error: {exc!r}; backing off {backoff}s")
             time.sleep(min(backoff, 300))
             backoff = min(backoff * 2, 300)
             continue
-        time.sleep(tick_seconds)
+        # The held inbound poll IS the idle wait when long-polling (returns
+        # instantly on a delivery, parks up to poll_wait otherwise). Only add a
+        # fixed sleep when long-poll is disabled, preserving the old cadence.
+        if poll_wait <= 0:
+            time.sleep(tick_seconds)
 
 
 if __name__ == "__main__":

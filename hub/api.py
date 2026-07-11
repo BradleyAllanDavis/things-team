@@ -92,8 +92,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             wait = min(float(qs.get("wait", ["0"])[0]), 30.0)
             deadline = time.time() + wait
             deliveries = self.ledger.lease_deliveries(p, limit, self.lease_seconds)
+            # Held long-poll: park on the ledger's delivery CV and re-check on
+            # wake (a delivery committed) or timeout — no busy sleep, no per-
+            # connection sqlite scan every 0.5s. Near-push once a row lands.
             while not deliveries and time.time() < deadline:
-                time.sleep(0.5)
+                self.ledger.wait_for_delivery(deadline - time.time())
                 deliveries = self.ledger.lease_deliveries(p, limit, self.lease_seconds)
             return self._send(200, {"deliveries": deliveries})
         if parsed.path == "/v1/watch":

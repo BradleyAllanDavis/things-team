@@ -154,6 +154,15 @@ class Ledger:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.lock = threading.RLock()
+        # Push primitive: a CV with its OWN lock (never the data RLock) and a
+        # monotonic generation counter. Every delivery-CREATING commit bumps
+        # the generation and notifies; a parked reader (HTTP long-poll or the
+        # in-process gateway inbound loop) wakes the instant work is ready
+        # instead of busy-polling. One global generation — a spurious wakeup
+        # for the wrong member costs one cheap re-query at family scale, and
+        # it keeps the data lock out of the CV predicate. See DESIGN §6b.
+        self._new_delivery = threading.Condition()
+        self._delivery_gen = 0
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -163,6 +172,27 @@ class Ledger:
 
     def close(self) -> None:
         self.conn.close()
+
+    # -- push primitive ----------------------------------------------------
+    def wait_for_delivery(self, timeout: float) -> None:
+        """Block until a new delivery is queued (generation advances) or the
+        timeout elapses. Never touches the data lock — safe to call between
+        lease_deliveries() re-checks. A non-positive timeout returns at once."""
+        if timeout <= 0:
+            return
+        with self._new_delivery:
+            gen = self._delivery_gen
+            self._new_delivery.wait_for(
+                lambda: self._delivery_gen != gen, timeout)
+
+    def _signal_delivery(self) -> None:
+        """Announce that a leasable delivery was just committed. MUST be
+        called AFTER the data transaction commits (not inside it): a waiter
+        woken while the write is still uncommitted could re-query, miss the
+        row, and re-park — reintroducing a latency floor."""
+        with self._new_delivery:
+            self._delivery_gen += 1
+            self._new_delivery.notify_all()
 
     # -- events ----------------------------------------------------------
     def _event(self, kind: str, transfer_id=None, device_id=None, detail=None) -> None:
@@ -342,7 +372,9 @@ class Ledger:
             rec = self._transfer_dict(self.conn.execute(
                 "SELECT * FROM transfers WHERE id=?", (tid,)).fetchone())
             rec["deduped"] = False
-            return rec
+        # committed above — wake any spoke long-polling for this recipient
+        self._signal_delivery()
+        return rec
 
     def _transfer_dict(self, row) -> dict:
         return {
@@ -418,6 +450,7 @@ class Ledger:
             return leased
 
     def ack_delivery(self, p: Principal, delivery_id: str, dst_uuid=None) -> dict:
+        queued_echo = False
         with self.lock, self.conn:
             d = self.conn.execute(
                 "SELECT d.*, t.terminal, t.from_member, t.to_member, t.applied_at,"
@@ -449,6 +482,7 @@ class Ledger:
                         " to_member, state, created_at) VALUES (?,?,?,?,?,?)",
                         (_new_id(), d["transfer_id"], _ECHO_KIND[d["terminal"]],
                          d["to_member"], "queued", now))
+                    queued_echo = True
             else:
                 self.conn.execute(
                     "UPDATE deliveries SET state='done', done_at=? WHERE id=?",
@@ -458,7 +492,9 @@ class Ledger:
                     (now, d["transfer_id"]))
                 self._event("terminal-echoed", d["transfer_id"], p.device_id,
                             {"kind": d["kind"]})
-            return {"ok": True}
+        if queued_echo:  # committed above — wake the recipient's poll
+            self._signal_delivery()
+        return {"ok": True}
 
     def nack_delivery(self, p: Principal, delivery_id: str, error: str) -> dict:
         with self.lock, self.conn:
@@ -504,6 +540,7 @@ class Ledger:
         long as the canceled echo hasn't already been delivered."""
         if state not in TERMINAL_STATES:
             raise LedgerError(f"state must be one of {TERMINAL_STATES}")
+        queued_echo = False
         with self.lock, self.conn:
             t = self.conn.execute(
                 "SELECT * FROM transfers WHERE id=? AND tenant_id=?"
@@ -515,39 +552,46 @@ class Ledger:
             now = time.time()
             if t["terminal"]:
                 if t["terminal"] == state:
-                    return {"ok": True, "terminal": state, "already_set": True}
-                if t["terminal"] == "canceled" and state == "completed":
+                    result = {"ok": True, "terminal": state, "already_set": True}
+                elif t["terminal"] == "canceled" and state == "completed":
                     echo_done = self.conn.execute(
                         "SELECT 1 FROM deliveries WHERE transfer_id=? AND kind='cancel'"
                         " AND state='done'", (transfer_id,)).fetchone()
                     if echo_done:
                         self._event("terminal-upgrade-refused", transfer_id,
                                     p.device_id, {"kept": "canceled"})
-                        return {"ok": True, "terminal": "canceled",
-                                "already_set": True}
-                    # upgrade: completed beats canceled
-                    self.conn.execute(
-                        "UPDATE transfers SET terminal='completed', terminal_by=?"
-                        " WHERE id=?", (p.member_id, transfer_id))
-                    self.conn.execute(
-                        "DELETE FROM deliveries WHERE transfer_id=? AND kind='cancel'"
-                        " AND state != 'done'", (transfer_id,))
-                    self._queue_echo(t, "completed", now)
-                    self._event("terminal-upgraded", transfer_id, p.device_id,
-                                {"from": "canceled", "to": "completed"})
-                    return {"ok": True, "terminal": "completed"}
-                # completed already set; canceled arrives → completed wins
-                return {"ok": True, "terminal": "completed", "already_set": True}
+                        result = {"ok": True, "terminal": "canceled",
+                                  "already_set": True}
+                    else:
+                        # upgrade: completed beats canceled
+                        self.conn.execute(
+                            "UPDATE transfers SET terminal='completed', terminal_by=?"
+                            " WHERE id=?", (p.member_id, transfer_id))
+                        self.conn.execute(
+                            "DELETE FROM deliveries WHERE transfer_id=? AND kind='cancel'"
+                            " AND state != 'done'", (transfer_id,))
+                        queued_echo = self._queue_echo(t, "completed", now)
+                        self._event("terminal-upgraded", transfer_id, p.device_id,
+                                    {"from": "canceled", "to": "completed"})
+                        result = {"ok": True, "terminal": "completed"}
+                else:
+                    # completed already set; canceled arrives → completed wins
+                    result = {"ok": True, "terminal": "completed", "already_set": True}
+            else:
+                self.conn.execute(
+                    "UPDATE transfers SET terminal=?, terminal_by=? WHERE id=?",
+                    (state, p.member_id, transfer_id))
+                self._event("terminal-set", transfer_id, p.device_id,
+                            {"state": state, "by": p.handle})
+                queued_echo = self._queue_echo(t, state, now)
+                result = {"ok": True, "terminal": state}
+        if queued_echo:  # committed above — wake the echo recipient's poll
+            self._signal_delivery()
+        return result
 
-            self.conn.execute(
-                "UPDATE transfers SET terminal=?, terminal_by=? WHERE id=?",
-                (state, p.member_id, transfer_id))
-            self._event("terminal-set", transfer_id, p.device_id,
-                        {"state": state, "by": p.handle})
-            self._queue_echo(t, state, now)
-            return {"ok": True, "terminal": state}
-
-    def _queue_echo(self, t_row, state: str, now: float) -> None:
+    def _queue_echo(self, t_row, state: str, now: float) -> bool:
+        """Returns True iff a new leasable ('queued') echo delivery was
+        inserted (the caller signals the CV after commit)."""
         """Queue the terminal echo to the party that did NOT report it.
         Special case: sender revoked before the recipient ever applied the
         create — skip the create outright (never materialize a dead todo)
@@ -571,13 +615,14 @@ class Ledger:
                     " WHERE id=?", (now, t["id"]))
                 self._event("create-skipped-terminal", t["id"], None,
                             {"terminal": state})
-                return
+                return False  # create suppressed, nothing leasable queued
             if create and create["state"] == "leased":
-                return  # ack_delivery will queue the echo when dst_uuid lands
+                return False  # ack_delivery will queue the echo when dst_uuid lands
         self.conn.execute(
             "INSERT OR IGNORE INTO deliveries (id, transfer_id, kind, to_member,"
             " state, created_at) VALUES (?,?,?,?,?,?)",
             (_new_id(), t["id"], _ECHO_KIND[state], other, "queued", now))
+        return True
 
     # -- health -------------------------------------------------------------
     def health(self) -> dict:
