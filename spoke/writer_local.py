@@ -92,7 +92,16 @@ class LocalWriter:
         watch, restore_to = self._capture()
         data = quote(json.dumps(operations))
         url = f"things:///json?auth-token={quote(self.token_provider())}&data={data}"
-        subprocess.run(["open", "-g", url], check=True, timeout=15)
+        try:
+            subprocess.run(["open", "-g", url], check=True, timeout=15)
+        except subprocess.CalledProcessError as exc:
+            # Never let the auth-token-bearing url reach a log or the hub
+            # (str(exc) on Called Process/TimeoutExpired embeds the full
+            # argv). Redact before it leaves this function.
+            raise RuntimeError(
+                f"things:/// open failed (exit {exc.returncode})") from None
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("things:/// open timed out after 15s") from None
         self._settle_and_watch(watch, restore_to)
 
     # -- ThingsWriter interface --------------------------------------------

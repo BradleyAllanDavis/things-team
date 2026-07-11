@@ -70,7 +70,7 @@ class MirrorReader:
             subprocess.run(
                 ["/bin/launchctl", "kickstart", "-k",
                  f"gui/{os.getuid()}/{self.kick_agent}"],
-                capture_output=True, timeout=5)
+                capture_output=True, timeout=10)
         except Exception as exc:
             _log(f"mirror kickstart failed: {exc}")
             return

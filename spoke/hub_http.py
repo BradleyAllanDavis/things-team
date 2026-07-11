@@ -19,6 +19,19 @@ class HubHTTPError(RuntimeError):
         self.status = status
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """The default opener follows cross-host redirects and resends every
+    header — including the Bearer device token — to wherever `Location`
+    points. The hub is addressed by a pinned IP (never redirects itself),
+    so any redirect response is unexpected; refuse it instead of leaking
+    the token off-host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            newurl, code, "things-team: refusing to follow redirect "
+            "(hub host is pinned)", headers, fp)
+
+
 class HttpHubClient:
     def __init__(self, hub_url: str, token_provider, timeout: float = 40.0,
                  poll_wait: float = 0.0):
@@ -26,6 +39,7 @@ class HttpHubClient:
         self.token_provider = token_provider  # callable -> str
         self.timeout = timeout
         self.poll_wait = poll_wait  # >0 turns delivery polls into long-polls
+        self._opener = urllib.request.build_opener(_NoRedirect)
 
     def _request(self, method: str, path: str, body=None, timeout=None):
         url = f"{self.hub_url}{path}"
@@ -35,7 +49,7 @@ class HttpHubClient:
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
+            with self._opener.open(req, timeout=timeout or self.timeout) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as exc:  # surface hub's error payload
             raise HubHTTPError(exc.code, exc.read().decode("utf-8", "replace"))
