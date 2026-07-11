@@ -36,21 +36,40 @@ if [ ! -f "$CONFIG" ]; then
   "hub_url": "$HUB_URL",
   "device_token_file": "$CONFIG_DIR/device-token",
   "things_auth_token_file": "$CONFIG_DIR/things-auth-token",
-  "trigger_tags": {"bradley": ["bradley"]},
+  "trigger_tags": {"bradley": ["b"]},
   "mirror_path": "$HOME/.cache/things-mirror/main.sqlite",
   "mirror_agent": "com.jill.things-mirror",
-  "tick_seconds": 60
+  "tick_seconds": 5,
+  "poll_wait": 3
 }
 JSON
   echo "wrote $CONFIG"
 fi
+
+# Reconcile keys that must track the deployed pattern even on an existing
+# install (2026-07-11: trigger tag bradley->b, tick interval 60s->5s +
+# long-poll) — re-running this script is how an already-installed Mac
+# picks these up, since the block above only writes when the file is absent.
+python3 - "$CONFIG" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+cfg["trigger_tags"] = {"bradley": ["b"]}
+cfg["tick_seconds"] = 5
+cfg["poll_wait"] = 3
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PYEOF
+echo "config reconciled: trigger_tags.bradley=[b], tick_seconds=5, poll_wait=3"
 
 # 3. Pre-create the tags this Mac's Things needs (programmatic writes
 #    silently drop unknown tags): the trigger tag, the delegated tag, and
 #    the provenance tag for arrivals from the other member.
 osascript <<'EOF'
 tell application "Things3"
-    repeat with tagName in {"bradley", "👉 delegated", "from-bradley"}
+    repeat with tagName in {"b", "👉 delegated", "from-bradley"}
         try
             set t to tag (tagName as string)
         on error
@@ -59,7 +78,7 @@ tell application "Things3"
     end repeat
 end tell
 EOF
-echo "tags ensured: bradley / 👉 delegated / from-bradley"
+echo "tags ensured: b / 👉 delegated / from-bradley"
 
 # 4. Mirror agent (/bin/zsh + FDA — see header)
 cp "$REPO_DIR/deploy/jill/things-mirror.zsh" "$APPSUPPORT/things-mirror.zsh"
@@ -72,7 +91,7 @@ cat > "$AGENTS/com.jill.things-mirror.plist" <<PLIST
     <string>/bin/zsh</string>
     <string>$APPSUPPORT/things-mirror.zsh</string>
   </array>
-  <key>StartInterval</key><integer>30</integer>
+  <key>StartInterval</key><integer>5</integer>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
   <key>StandardOutPath</key><string>/tmp/things-mirror.out</string>

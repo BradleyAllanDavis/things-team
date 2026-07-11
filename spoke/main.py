@@ -9,10 +9,11 @@ Config: JSON at ~/Library/Application Support/things-team/config.json
     "hub_url": "http://192.168.0.30:8712",          // BY IP (LaunchAgent DNS)
     "device_token_file": "~/.config/things-team/device-token",
     "things_auth_token_file": "~/.config/things-team/things-auth-token",
-    "trigger_tags": {"bradley": ["bradley"]},        // EXACT titles
+    "trigger_tags": {"bradley": ["b"]},              // EXACT titles
     "mirror_path": "~/.cache/things-mirror/main.sqlite",
     "mirror_agent": "com.jill.things-mirror",        // kickstart label
-    "tick_seconds": 60
+    "tick_seconds": 5,
+    "poll_wait": 3                                   // long-poll /v1/deliveries
   }
 
 Runs forever (KeepAlive LaunchAgent), one serialized tick per interval.
@@ -62,7 +63,8 @@ def main() -> None:
     writer = LocalWriter(
         _file_token(cfg["things_auth_token_file"]), reader)
     hub = HttpHubClient(
-        cfg["hub_url"], _file_token(cfg["device_token_file"]))
+        cfg["hub_url"], _file_token(cfg["device_token_file"]),
+        poll_wait=float(cfg.get("poll_wait", 0.0)))
     state_path = os.path.expanduser(
         "~/Library/Application Support/things-team/spoke-state.sqlite")
     core = SpokeCore(

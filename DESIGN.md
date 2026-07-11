@@ -92,7 +92,8 @@ applied the create, the create is skipped outright. Race rule: terminal
 state is set-once at the hub; **completed beats canceled** (work done wins),
 up until the canceled echo has already been delivered.
 
-### 3.3 Spoke tick (serialized, every 60s)
+### 3.3 Spoke tick (serialized, on a configurable interval — 5s as deployed
+2026-07-11, was 60s)
 
 ```
 tick():
