@@ -104,3 +104,16 @@ class QueueWriter:
              "attributes": {"tags": list(tags)}},
             None)  # retag is computed-from-current-state; no stable idem key
         return True
+
+    def set_tags_and_terminal(self, uuid: str, tags, state: str) -> bool:
+        """Combined tags+terminal write in ONE queue round-trip (one
+        submit-and-wait-for-verify instead of two sequential ones) -- see
+        SpokeCore._retag_sender_copy, the sender-completes-at-send path."""
+        attr = "completed" if state == "completed" else "canceled"
+        status = self._submit_and_wait(
+            {"type": "to-do", "operation": "update", "id": uuid,
+             "attributes": {"tags": list(tags), attr: True}},
+            None)  # same as set_tags: computed-from-current-state, no idem key
+        if status == "applied":
+            _log(f"tags+{state} on {uuid} applied but not mirror-verified")
+        return True

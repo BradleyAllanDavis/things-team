@@ -129,6 +129,17 @@ class FakeWriter:
         # catch the difference — mimic verified-success only when all landed
         return set(t["tags"]) == set(tags)
 
+    def set_tags_and_terminal(self, uuid, tags, state):
+        if self.fail_next_terminal:
+            self.fail_next_terminal = False
+            return False
+        t = self.things.todos.get(uuid)
+        if t is None:
+            return False
+        t["tags"] = [tag for tag in tags if tag in self.things.tags]
+        t["status"] = "completed" if state == "completed" else "canceled"
+        return set(t["tags"]) == set(tags)
+
 
 class FlakyHub:
     """Wraps a HubClient, dropping the response of selected calls (the

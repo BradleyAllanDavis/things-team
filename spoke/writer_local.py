@@ -140,6 +140,25 @@ class LocalWriter:
         return self._verify(
             lambda: set(self.reader.tags_of(uuid) or []) == want)
 
+    def set_tags_and_terminal(self, uuid: str, tags, state: str) -> bool:
+        """Combined tags+terminal write in ONE open+verify round-trip
+        (one settle-window + one mirror-poll instead of two sequential
+        ones) -- see SpokeCore._retag_sender_copy, the sender-completes-
+        at-send path."""
+        tags = list(tags)
+        attr = "completed" if state == "completed" else "canceled"
+        self._open_json([{"type": "to-do", "operation": "update", "id": uuid,
+                          "attributes": {"tags": tags, attr: True}}])
+        want_tags = set(tags)
+        want_status = "completed" if state == "completed" else "canceled"
+
+        def check():
+            if set(self.reader.tags_of(uuid) or []) != want_tags:
+                return False
+            return (self.reader.status(uuid) or {}).get("status") == want_status
+
+        return self._verify(check)
+
     def _verify(self, check) -> bool:
         """URL applies are async fire-and-forget — never trust `open`
         returning. Bounded read-back loop against the local mirror."""

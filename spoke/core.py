@@ -181,6 +181,11 @@ class SpokeCore:
       create(envelope, provenance_tag, extra) -> None (fire-and-verify inside)
       set_terminal(uuid, state) -> bool          (True = verified/applied)
       set_tags(uuid, tags) -> bool
+      set_tags_and_terminal(uuid, tags, state) -> bool
+        (single combined write+verify -- HALF the round-trip latency of
+        calling set_tags then set_terminal separately, which is what the
+        sender-completes-at-send path does every time; see
+        _retag_sender_copy, 2026-07-11)
     hub:
       push_transfer(to, src_uuid, payload, rev) -> {id, deduped, terminal, ...}
       deliveries(limit) -> [delivery]
@@ -426,11 +431,13 @@ class SpokeCore:
         new_tags = [t for t in current if t.lower() not in all_triggers]
         if DELEGATED_TAG not in new_tags:
             new_tags.append(DELEGATED_TAG)
-        if not self.writer.set_tags(w["uuid"], new_tags):
-            _log(f"retag not yet verified for {w['uuid']}; will retry next tick")
-            return
-        if not self.writer.set_terminal(w["uuid"], "completed"):
-            _log(f"sender-side auto-complete not yet verified for {w['uuid']}; will retry next tick")
+        # One combined write+verify, not two sequential ones -- each
+        # set_*() round-trips through the full write-then-verify path
+        # (queue+applier for the gateway worker, URL-scheme+mirror-poll for
+        # a real Mac spoke), so doing tags then terminal separately doubled
+        # this step's latency (measured live: ~25s instead of ~13s).
+        if not self.writer.set_tags_and_terminal(w["uuid"], new_tags, "completed"):
+            _log(f"retag+auto-complete not yet verified for {w['uuid']}; will retry next tick")
             return
         self.state.mark_retagged(w["transfer_id"])
         _log(f"retagged + auto-completed sender copy {w['uuid']} -> {DELEGATED_TAG} (D2)")
