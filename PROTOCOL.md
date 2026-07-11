@@ -21,7 +21,9 @@ you are always comes from auth.
 
 `context_url` is a reserved seam (null in v1). No tags in the payload —
 control tags never cross the wire, payload tags are dropped in v1, and the
-provenance tag is computed by the hub (`from-<sender-handle>`), not carried.
+provenance tag is computed by the hub (`from-<sender-handle>`, plus a
+per-member emoji suffix where one's configured — `hub/ledger.py`'s
+`provenance_tag()` / `_PROVENANCE_EMOJI`), not carried.
 
 ## Transfer state machine
 
@@ -69,7 +71,7 @@ Leases up to N deliveries for the calling member (long-polls up to S≤30s).
 Lease TTL 300s; expiry re-queues. Each entry:
 ```json
 {"id": "…", "transfer_id": "…", "kind": "create", "attempts": 1,
- "payload": {…envelope…}, "from": "bradley", "provenance_tag": "from-bradley"}
+ "payload": {…envelope…}, "from": "bradley", "provenance_tag": "from-bradley 👨"}
 ```
 or, for terminal kinds:
 ```json

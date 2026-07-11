@@ -2,7 +2,8 @@
 
 **Multi-account task delegation for [Things 3](https://culturedcode.com/things/).**
 Tag a todo with a family member's name; it appears natively in *their* Things
-Inbox. When they finish it, your copy completes itself.
+Inbox. Delegating IS the action — your copy completes itself the moment
+delivery is confirmed, not whenever they get around to the task.
 
 Cultured Code offers no way to sync tasks between separate Things accounts —
 no public API, no server-side write path, no multi-user anything. Things Team
@@ -13,12 +14,11 @@ zero infrastructure beyond a LAN.
 you                                    them
 ────────────────────────────────────  ────────────────────────────────────
 tag a todo `jill`          ──────▶    lands in her real Inbox,
-                                      tagged `from-bradley`
+                                      tagged `from-bradley 👨`
 your copy retags to
-`👉 delegated` (waiting-for)          she files it wherever she likes,
-                                      then completes it
-your copy marks itself     ◀──────
-completed
+`👉 delegated` AND marks itself
+completed — same tick, no waiting     she files it wherever she likes,
+                                      then completes it on her own time
 ```
 
 ## How it works

@@ -35,6 +35,24 @@ TERMINAL_STATES = ("completed", "canceled")
 # terminal state -> echo delivery kind
 _ECHO_KIND = {"completed": "complete", "canceled": "cancel"}
 
+# Provenance tag emoji suffix per member handle (2026-07-11) -- matches the
+# emoji already used for these people elsewhere in Bradley's Things/docs
+# (docs/context.md uses "Bradley 👨" / "Jillian 👩"; the pre-existing Things
+# tag is "Jillian 👩🏻‍🦰"). Unlisted handles get no emoji (plain "from-<handle>"
+# still works, just not tagged with a face) -- add here when a new member's
+# person-emoji is decided, no code change needed beyond this dict. Must be
+# pre-created as a real tag in the RECIPIENT's Things (unknown tags are
+# silently dropped by the URL scheme).
+_PROVENANCE_EMOJI = {
+    "bradley": "👨",
+    "jill": "👩🏻‍🦰",
+}
+
+
+def provenance_tag(handle: str) -> str:
+    emoji = _PROVENANCE_EMOJI.get(handle)
+    return f"from-{handle} {emoji}" if emoji else f"from-{handle}"
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tenants (
   id          TEXT PRIMARY KEY,
@@ -443,7 +461,7 @@ class Ledger:
                 if d["kind"] == "create":
                     entry["payload"] = json.loads(d["payload"])
                     entry["from"] = d["from_handle"]
-                    entry["provenance_tag"] = "from-" + d["from_handle"]
+                    entry["provenance_tag"] = provenance_tag(d["from_handle"])
                 else:
                     entry["uuid"] = uuid_to_act
                 leased.append(entry)

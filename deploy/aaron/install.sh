@@ -78,7 +78,7 @@ echo "config reconciled: trigger_tags.bradley=[b], tick_seconds=5, poll_wait=3"
 #    to Jill's — both describe "the other party" (Bradley).
 osascript <<'EOF'
 tell application "Things3"
-    repeat with tagName in {"b", "👉 delegated", "from-bradley"}
+    repeat with tagName in {"b", "👉 delegated", "from-bradley 👨"}
         try
             set t to tag (tagName as string)
         on error
@@ -87,7 +87,7 @@ tell application "Things3"
     end repeat
 end tell
 EOF
-echo "tags ensured: b / 👉 delegated / from-bradley"
+echo "tags ensured: b / 👉 delegated / from-bradley 👨"
 
 # 4. Mirror agent (/bin/zsh + FDA — see header)
 cp "$REPO_DIR/deploy/aaron/things-mirror.zsh" "$APPSUPPORT/things-mirror.zsh"

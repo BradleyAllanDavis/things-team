@@ -42,7 +42,7 @@ class InvariantSim(unittest.TestCase):
         things = {"bradley": FakeThings("b"), "jill": FakeThings("j")}
         for t in things.values():
             t.tags.update({"jill", "bradley", DELEGATED_TAG,
-                           "from-bradley", "from-jill"})
+                           "from-bradley 👨", "from-jill 👩🏻‍🦰"})
         writers, hubs, spokes = {}, {}, {}
         for handle, m in members.items():
             p = ledger.principal_for_member(
@@ -101,8 +101,11 @@ class InvariantSim(unittest.TestCase):
                 key = (sender, title)
                 if key in acted:
                     continue
+                # prefix match, not exact -- provenance tags may carry a
+                # per-member emoji suffix (hub/ledger.py's provenance_tag())
                 dst = [u for u, t in things[recipient].todos.items()
-                       if t["title"] == title and "from-" + sender in t["tags"]]
+                       if t["title"] == title
+                       and any(tag.startswith("from-" + sender) for tag in t["tags"])]
                 if dst:
                     if plan == "recipient_completes":
                         things[recipient].complete(dst[0])

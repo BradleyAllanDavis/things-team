@@ -31,7 +31,7 @@ class SpokeCoreTestBase(unittest.TestCase):
         self.j_things = FakeThings("j")
         for things in (self.b_things, self.j_things):
             things.tags.update({"jill", "bradley", DELEGATED_TAG,
-                                "from-bradley", "from-jill"})
+                                "from-bradley 👨", "from-jill 👩🏻‍🦰"})
 
         self.b_hub = FlakyHub(DirectHubClient(self.ledger, pb, lease_seconds=0.2))
         self.j_hub = FlakyHub(DirectHubClient(self.ledger, pj, lease_seconds=0.2))
@@ -98,7 +98,7 @@ class TestOutbound(SpokeCoreTestBase):
         self.settle(1)
         [todo] = [t for t in self.j_things.todos.values() if t["title"] == "clean"]
         # only the provenance tag arrives; trigger + payload tags dropped (v1)
-        self.assertEqual(todo["tags"], ["from-bradley"])
+        self.assertEqual(todo["tags"], ["from-bradley 👨"])
 
 
 class TestInboundCrashSafety(SpokeCoreTestBase):
@@ -180,7 +180,7 @@ class TestRoundTrip(SpokeCoreTestBase):
         self.settle(2)
         [dst] = [u for u, t in self.b_things.todos.items()
                  if t["title"] == "pick up kids"]
-        self.assertEqual(self.b_things.todos[dst]["tags"], ["from-jill"])
+        self.assertEqual(self.b_things.todos[dst]["tags"], ["from-jill 👩🏻‍🦰"])
         self.assertEqual(self.b_things.todos[dst]["when"], "2026-07-12")  # honored
         # D2 symmetric ("either side"): jill's sender copy already completed
         self.assertEqual(self.j_things.todos[src]["status"], "completed")

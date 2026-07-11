@@ -58,7 +58,7 @@ class TestPush(LedgerTestBase):
         self.assertEqual(len(deliveries), 1)
         self.assertEqual(deliveries[0]["kind"], "create")
         self.assertEqual(deliveries[0]["payload"]["title"], "buy milk")
-        self.assertEqual(deliveries[0]["provenance_tag"], "from-bradley")
+        self.assertEqual(deliveries[0]["provenance_tag"], "from-bradley 👨")
 
     def test_push_idempotent_under_replay(self):
         r1 = self.ledger.push_transfer(self.b, "jill", "SRC-1", PAYLOAD)

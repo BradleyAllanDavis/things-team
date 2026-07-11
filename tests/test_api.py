@@ -55,7 +55,7 @@ class ApiTest(unittest.TestCase):
         d = j.deliveries()[0]
         self.assertEqual(d["kind"], "create")
         self.assertEqual(d["payload"]["title"], "水 filter")
-        self.assertEqual(d["provenance_tag"], "from-bradley")
+        self.assertEqual(d["provenance_tag"], "from-bradley 👨")
         j.ack(d["id"], dst_uuid="DST-HTTP-1")
 
         watch_b = b.watch()

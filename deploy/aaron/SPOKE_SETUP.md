@@ -58,7 +58,7 @@ THINGS_TEAM_HUB_URL="https://<tunnel-hostname>.bdavis.io" \
 
 or clone and run `deploy/aaron/install.sh` with that env var set. It
 clones/updates the repo, writes/reconciles the spoke config, **pre-creates
-the three tags this Mac needs** (`b`, `👉 delegated`, `from-bradley` —
+the three tags this Mac needs** (`b`, `👉 delegated`, `from-bradley 👨` —
 programmatic writes silently drop unknown tags), installs + loads both
 LaunchAgents.
 
@@ -77,11 +77,15 @@ tail -20 /tmp/things-team-spoke.err           # "spoke up: hub=…", ticking
 Then the live loop, both directions:
 
 1. Bradley tags a todo `aaron` → within ~10-20s it appears in Aaron's
-   Things Inbox tagged `from-bradley`, and Bradley's copy retags to
-   `👉 delegated`.
-2. Aaron completes it → within ~10-20s Bradley's copy marks completed.
+   Things Inbox tagged `from-bradley 👨`, and Bradley's copy retags to
+   `👉 delegated` AND marks itself completed — same tick, not waiting on
+   Aaron to finish the task (D2, 2026-07-11).
+2. Aaron completes it whenever — Bradley's copy already closed out at
+   delivery; Aaron's completion just resolves the transfer hub-side.
 3. Reverse: Aaron tags a todo `b` → lands in Bradley's Inbox
-   (`from-aaron`) → Bradley completes → Aaron's copy completes.
+   (`from-aaron`, no emoji configured yet — add one to `hub/ledger.py`'s
+   `_PROVENANCE_EMOJI` when Aaron's person-emoji is decided) → Aaron's own
+   copy completes at send too → Bradley completes his on his own time.
 
 ## Troubleshooting
 

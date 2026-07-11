@@ -175,7 +175,7 @@ class SplitPhaseTest(unittest.TestCase):
         self.b_things, self.j_things = FakeThings("b"), FakeThings("j")
         for things in (self.b_things, self.j_things):
             things.tags.update({"jill", "bradley", DELEGATED_TAG,
-                                "from-bradley", "from-jill"})
+                                "from-bradley 👨", "from-jill 👩🏻‍🦰"})
         self.b_hub = FlakyHub(DirectHubClient(self.ledger, pb, lease_seconds=0.2))
         self.j_hub = FlakyHub(DirectHubClient(self.ledger, pj, lease_seconds=0.2))
         self.b_spoke = self._spoke(self.b_things, self.b_hub, {"jill": ["jill"]}, "b")

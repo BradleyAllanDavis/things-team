@@ -39,7 +39,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/things-tea
 
 or clone and run `deploy/jill/install.sh`. It clones/updates the repo,
 writes/reconciles the spoke config, **pre-creates the three tags this Mac
-needs** (`b`, `👉 delegated`, `from-bradley` — programmatic writes silently
+needs** (`b`, `👉 delegated`, `from-bradley 👨` — programmatic writes silently
 drop unknown tags), installs + loads both LaunchAgents. Re-running the
 script also reconciles `trigger_tags`/`tick_seconds`/`poll_wait` on an
 already-installed Mac, so a `git pull && ./install.sh` picks up config
@@ -60,11 +60,14 @@ tail -20 /tmp/things-team-spoke.err           # "spoke up: hub=…", ticking
 Then the live loop, both directions:
 
 1. On the other member's Mac: tag any todo `j` → within ~10-20s it
-   appears in **this** Mac's Things Inbox tagged `from-bradley`, and the
-   sender's copy retags to `👉 delegated`.
-2. Complete it here → within ~10-20s the sender's copy marks completed.
-3. Reverse: tag a todo `b` here → lands in his Inbox
-   (`from-jill`) → he completes → this copy completes.
+   appears in **this** Mac's Things Inbox tagged `from-bradley 👨`, and the
+   sender's copy retags to `👉 delegated` AND marks itself completed — same
+   tick, not waiting on you to finish the task (D2, 2026-07-11).
+2. Complete it here whenever — the sender's copy already closed out at
+   delivery; your completion just resolves the transfer on the hub side.
+3. Reverse: tag a todo `b` here → lands in his Inbox (`from-jill 👩🏻‍🦰`),
+   your own copy here completes at send too → he completes his on his own
+   time.
 
 ## Troubleshooting
 
