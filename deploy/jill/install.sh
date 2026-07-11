@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# things-team spoke installer for a member Mac (Jill's MacBook Air).
+# Idempotent — safe to re-run. Everything is stock macOS: /usr/bin/python3,
+# /bin/zsh, launchd. No Homebrew/Nix dependencies.
+#
+# Prereqs done ONCE by hand before this works end-to-end (see SPOKE_SETUP.md):
+#   1. Full Disk Access for /bin/zsh (the mirror agent).
+#   2. Things → Settings → General → Enable Things URLs; token saved to
+#      ~/.config/things-team/things-auth-token (chmod 600).
+#   3. Hub device token saved to ~/.config/things-team/device-token (chmod 600).
+
+set -euo pipefail
+
+REPO_URL="https://github.com/BradleyAllanDavis/things-team"
+REPO_DIR="$HOME/things-team"
+APPSUPPORT="$HOME/Library/Application Support/things-team"
+CONFIG_DIR="$HOME/.config/things-team"
+AGENTS="$HOME/Library/LaunchAgents"
+HUB_URL="${THINGS_TEAM_HUB_URL:-http://192.168.0.30:8712}"  # BY IP — LaunchAgent DNS is unreliable
+
+echo "=== things-team spoke install ==="
+
+# 1. Code
+if [ -d "$REPO_DIR/.git" ]; then
+  git -C "$REPO_DIR" pull --ff-only
+else
+  git clone "$REPO_URL" "$REPO_DIR"
+fi
+
+# 2. Config (only written if absent — preserves local edits)
+mkdir -p "$APPSUPPORT" "$CONFIG_DIR" "$AGENTS"
+CONFIG="$APPSUPPORT/config.json"
+if [ ! -f "$CONFIG" ]; then
+  cat > "$CONFIG" <<JSON
+{
+  "hub_url": "$HUB_URL",
+  "device_token_file": "$CONFIG_DIR/device-token",
+  "things_auth_token_file": "$CONFIG_DIR/things-auth-token",
+  "trigger_tags": {"bradley": ["bradley"]},
+  "mirror_path": "$HOME/.cache/things-mirror/main.sqlite",
+  "mirror_agent": "com.jill.things-mirror",
+  "tick_seconds": 60
+}
+JSON
+  echo "wrote $CONFIG"
+fi
+
+# 3. Pre-create the tags this Mac's Things needs (programmatic writes
+#    silently drop unknown tags): the trigger tag, the delegated tag, and
+#    the provenance tag for arrivals from the other member.
+osascript <<'EOF'
+tell application "Things3"
+    repeat with tagName in {"bradley", "👉 delegated", "from-bradley"}
+        try
+            set t to tag (tagName as string)
+        on error
+            make new tag with properties {name:(tagName as string)}
+        end try
+    end repeat
+end tell
+EOF
+echo "tags ensured: bradley / 👉 delegated / from-bradley"
+
+# 4. Mirror agent (/bin/zsh + FDA — see header)
+cp "$REPO_DIR/deploy/jill/things-mirror.zsh" "$APPSUPPORT/things-mirror.zsh"
+cat > "$AGENTS/com.jill.things-mirror.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jill.things-mirror</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/zsh</string>
+    <string>$APPSUPPORT/things-mirror.zsh</string>
+  </array>
+  <key>StartInterval</key><integer>30</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/tmp/things-mirror.out</string>
+  <key>StandardErrorPath</key><string>/tmp/things-mirror.err</string>
+</dict></plist>
+PLIST
+
+# 5. Spoke agent (stock python3, KeepAlive)
+cat > "$AGENTS/com.jill.things-team-spoke.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jill.things-team-spoke</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string>
+    <string>$REPO_DIR/spoke/main.py</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/tmp/things-team-spoke.out</string>
+  <key>StandardErrorPath</key><string>/tmp/things-team-spoke.err</string>
+</dict></plist>
+PLIST
+
+for label in com.jill.things-mirror com.jill.things-team-spoke; do
+  launchctl unload "$AGENTS/$label.plist" 2>/dev/null || true
+  launchctl load "$AGENTS/$label.plist"
+done
+
+echo ""
+echo "=== Installed. Verify: ==="
+echo "  1. ls -la ~/.cache/things-mirror/main.sqlite   (mirror landing — needs FDA on /bin/zsh)"
+echo "  2. tail -f /tmp/things-team-spoke.err          (spoke tick log)"
+echo "  3. Token files present + chmod 600:"
+echo "       $CONFIG_DIR/device-token"
+echo "       $CONFIG_DIR/things-auth-token"
