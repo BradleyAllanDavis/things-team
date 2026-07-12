@@ -1,5 +1,5 @@
 """HubClient over HTTP — what a real (remote) spoke uses to talk to the
-things-team hub. Stdlib urllib, hub addressed BY IP in deployed configs
+tandem hub. Stdlib urllib, hub addressed BY IP in deployed configs
 (LaunchAgent-context DNS for LAN hostnames is unreliable on macOS — a
 hard-won lesson from the predecessor system).
 
@@ -28,7 +28,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(
-            newurl, code, "things-team: refusing to follow redirect "
+            newurl, code, "tandem: refusing to follow redirect "
             "(hub host is pinned)", headers, fp)
 
 

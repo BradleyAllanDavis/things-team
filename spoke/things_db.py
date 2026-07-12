@@ -22,7 +22,7 @@ import time
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-reader] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-reader] {msg}", file=sys.stderr, flush=True)
 
 
 def _thingsdate(column: str) -> str:

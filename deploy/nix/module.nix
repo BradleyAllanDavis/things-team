@@ -1,4 +1,4 @@
-# things-team hub — NixOS service module (mine.services.things-team-hub).
+# tandem hub — NixOS service module (mine.services.tandem-hub).
 #
 # The hub is a stdlib-only Python process (hub/server.py): ledger + HTTP
 # API + the in-process gateway worker for the member whose Macs ride a
@@ -15,7 +15,7 @@
 with lib;
 
 let
-  cfg = config.mine.services.things-team-hub;
+  cfg = config.mine.services.tandem-hub;
 
   bootstrapJson = builtins.toJSON {
     tenant = cfg.bootstrap.tenant;
@@ -34,8 +34,8 @@ let
     cfg.bootstrap.devices;
 in
 {
-  options.mine.services.things-team-hub = {
-    enable = mkEnableOption "things-team hub (multi-account Things 3 delegation)";
+  options.mine.services.tandem-hub = {
+    enable = mkEnableOption "tandem hub (multi-account Things 3 delegation)";
 
     port = mkOption {
       type = types.port;
@@ -137,20 +137,20 @@ in
   };
 
   config = mkIf cfg.enable {
-    systemd.services.things-team-hub = {
-      description = "things-team hub — multi-account Things 3 delegation";
+    systemd.services.tandem-hub = {
+      description = "tandem hub — multi-account Things 3 delegation";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
       environment = {
-        THINGS_TEAM_PORT = toString cfg.port;
-        THINGS_TEAM_BIND = cfg.bindAddress;
-        THINGS_TEAM_BOOTSTRAP = bootstrapJson;
-        THINGS_TEAM_TICK_SECONDS = toString cfg.tickSeconds;
+        TANDEM_PORT = toString cfg.port;
+        TANDEM_BIND = cfg.bindAddress;
+        TANDEM_BOOTSTRAP = bootstrapJson;
+        TANDEM_TICK_SECONDS = toString cfg.tickSeconds;
         THINGS_MIRROR_DB = cfg.mirrorPath;
         THINGS_QUEUE_URL = cfg.queueUrl;
       } // optionalAttrs (cfg.gatewayMember != null) {
-        THINGS_TEAM_GATEWAY_MEMBER = cfg.gatewayMember;
-        THINGS_TEAM_TRIGGER_TAGS = builtins.toJSON cfg.triggerTags;
+        TANDEM_GATEWAY_MEMBER = cfg.gatewayMember;
+        TANDEM_TRIGGER_TAGS = builtins.toJSON cfg.triggerTags;
       };
       serviceConfig = {
         Type = "simple";

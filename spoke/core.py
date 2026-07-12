@@ -1,4 +1,4 @@
-"""things-team spoke core — the sync tick, backend-agnostic.
+"""tandem spoke core — the sync tick, backend-agnostic.
 
 ONE core, TWO deployments (DESIGN.md amendment, 2026-07-11):
 
@@ -47,7 +47,7 @@ import threading
 import time
 
 DELEGATED_TAG = "👉 delegated"
-ENVELOPE_SCHEMA = "things-team.todo/1"
+ENVELOPE_SCHEMA = "tandem.todo/1"
 MAX_CHECKLIST = 100
 MAX_NOTES = 10000
 
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS observed (
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-spoke] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-spoke] {msg}", file=sys.stderr, flush=True)
 
 
 class SpokeState:

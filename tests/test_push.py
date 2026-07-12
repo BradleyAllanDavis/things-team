@@ -25,7 +25,7 @@ from spoke.core import DELEGATED_TAG, SpokeCore, SpokeState
 from spoke.hub_http import HttpHubClient
 from tests.fakes import FakeReader, FakeThings, FakeWriter, FlakyHub
 
-PAYLOAD = {"schema": "things-team.todo/1", "title": "task", "notes": "",
+PAYLOAD = {"schema": "tandem.todo/1", "title": "task", "notes": "",
            "checklist": [], "when": None, "deadline": None, "context_url": None}
 
 

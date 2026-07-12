@@ -1,4 +1,4 @@
-"""things-team hub ledger — the single stateful coordinator.
+"""tandem hub ledger — the single stateful coordinator.
 
 SQLite (WAL), stdlib-only. Every row roots at a tenant; every query is
 scoped through the authenticated Principal's tenant — cross-tenant

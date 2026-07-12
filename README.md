@@ -1,4 +1,6 @@
-# Things Team
+# Tandem
+
+*Unofficial. Not affiliated with or endorsed by Cultured Code.*
 
 **Multi-account task delegation for [Things 3](https://culturedcode.com/things/).**
 Tag a todo with a family member's name; it appears natively in *their* Things
@@ -6,9 +8,22 @@ Inbox. Delegating IS the action — your copy completes itself the moment
 delivery is confirmed, not whenever they get around to the task.
 
 Cultured Code offers no way to sync tasks between separate Things accounts —
-no public API, no server-side write path, no multi-user anything. Things Team
-builds bidirectional delegation on top of that anyway, across users who share
-zero infrastructure beyond a LAN.
+no public API, no server-side write path, no multi-user anything. As far as
+I could find (no public repo, forum thread, or Reddit post describing one —
+[MacPowerUser users are told to switch apps instead](https://talk.macpowerusers.com/t/things-3-for-a-family/33302)),
+nobody has built cross-account sync for Things before. Tandem does, across
+users who share zero infrastructure beyond a LAN.
+
+**Why it's safe:** Cultured Code's own support article on
+[third-party AI tools](https://culturedcode.com/things/support/articles/5510170/)
+names "any tool that asks for your Things Cloud credentials" as unsafe and
+warns it has already seen data loss from tools that bypass the sanctioned
+integration surface. Tandem never touches Things Cloud and never asks for a
+password. Writes go through Cultured Code's own documented URL scheme (one
+of the four mechanisms that article endorses); reads are a local, read-only
+SQLite snapshot on each member's own Mac — the same long-precedented
+mechanism `things.py` and other Things tooling have used for years. The hub
+coordinates deliveries; it never authenticates as anyone.
 
 ```
 you                                    them
@@ -55,7 +70,7 @@ in [THINGS-INTERNALS.md](THINGS-INTERNALS.md).
 `tests/test_invariants.py` proves all three end-to-end: a real hub and two
 spokes over fake Things accounts, driven through randomized chaos — writer
 crashes after firing, lost responses, expired leases — asserting no-loss /
-no-dup / round-trip at quiescence. The whole suite (46 tests) is stdlib
+no-dup / round-trip at quiescence. The whole suite (58 tests) is stdlib
 `unittest`; even the tests have zero dependencies:
 
 ```
@@ -65,7 +80,7 @@ python3 -m unittest discover tests
 ## Deploying
 
 v1 topology: hub on an always-on Linux box (NixOS module exported from
-`flake.nix` as `nixosModules.things-team-hub`), one LaunchAgent spoke per
+`flake.nix` as `nixosModules.tandem-hub`), one LaunchAgent spoke per
 member Mac (`deploy/`). Members/devices are provisioned declaratively —
 device tokens are materialized from a secrets manager at deploy time and the
 hub stores only their hashes.
@@ -84,11 +99,15 @@ trigger delegation).
 - Checklist items arrive unchecked (no per-item state on create), max 100.
 - Recipient tags don't transfer (their tag vocabulary is theirs).
 - A todo delegates once; re-delegating a resolved transfer is a v2 seam
-  (`rev > 1`), as are edit propagation, off-LAN members (TLS), and
-  hub-hosted context bundles. See [ROADMAP.md](ROADMAP.md).
+  (`rev > 1`), as is edit propagation and hub-hosted context bundles. See
+  [ROADMAP.md](ROADMAP.md).
+- Off-LAN members work (long-poll survives Cloudflare Tunnel/any reverse
+  proxy untouched — see `deploy/aaron/`), but need a tunnel or equivalent in
+  front of the hub; nothing off-LAN-specific ships by default.
 
 ## Status
 
-v1, LAN-only, two members. Built for my family; the tenancy model
-(tenants → members → devices, capability tiers) is the seam for anything
-bigger.
+v1, two members live (my wife and me) round-tripping delegations daily; a
+third (a friend, off-LAN over a tunnel) is configured on the hub and pending
+his own device setup. Built for my family; the tenancy model (tenants →
+members → devices, capability tiers) is the seam for anything bigger.

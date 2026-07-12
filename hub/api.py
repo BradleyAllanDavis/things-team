@@ -1,4 +1,4 @@
-"""things-team hub HTTP API — the /v1 surface spokes talk to.
+"""tandem hub HTTP API — the /v1 surface spokes talk to.
 
 Stdlib ThreadingHTTPServer (deliberately no framework — matches the
 things-gateway convention this deploys next to). All routes require
@@ -34,7 +34,7 @@ class ApiHandler(BaseHTTPRequestHandler):
     lease_seconds: float = DEFAULT_LEASE_SECONDS
 
     def log_message(self, fmt, *args):
-        print(f"[things-team-hub] {self.address_string()} - {fmt % args}",
+        print(f"[tandem-hub] {self.address_string()} - {fmt % args}",
               file=sys.stderr)
 
     # -- plumbing -----------------------------------------------------------
@@ -71,7 +71,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid JSON body"})
         except Exception as exc:  # noqa: BLE001 — last-resort 500, never hang
-            print(f"[things-team-hub] 500: {exc!r}", file=sys.stderr)
+            print(f"[tandem-hub] 500: {exc!r}", file=sys.stderr)
             self._send(500, {"error": "internal error"})
 
     # -- routes ----------------------------------------------------------------

@@ -1,15 +1,15 @@
-# Things Team — wire protocol (v1)
+# Tandem — wire protocol (v1)
 
 All endpoints under `/v1`, JSON bodies, `Authorization: Bearer <device-token>`.
 Auth resolves to a Principal (tenant, member, device, capabilities); no
 endpoint ever accepts a tenant or member identifier *for* the caller — who
 you are always comes from auth.
 
-## Envelope — `things-team.todo/1`
+## Envelope — `tandem.todo/1`
 
 ```json
 {
-  "schema":      "things-team.todo/1",
+  "schema":      "tandem.todo/1",
   "title":       "string, required",
   "notes":       "string, byte-identical, ≤ 10000",
   "checklist":   ["item title", "…"],

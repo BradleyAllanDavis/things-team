@@ -32,7 +32,7 @@ VERIFY_INTERVAL = 1.0
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-lwriter] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-lwriter] {msg}", file=sys.stderr, flush=True)
 
 
 def _frontmost_name():

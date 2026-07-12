@@ -1,4 +1,4 @@
-# Things Team — design (v1)
+# Tandem — design (v1)
 
 *Derived from the 2026-07-03 design checkpoint; deployment topology amended
 2026-07-11 after review against live infrastructure. This document is the
@@ -7,9 +7,9 @@ behavioral contract; PROTOCOL.md is the wire spec.*
 ## 1. Product framing
 
 Cultured Code offers no way to sync tasks between separate Things accounts.
-Things Team fills that gap: delegate a todo to another person by tagging it;
+Tandem fills that gap: delegate a todo to another person by tagging it;
 it appears natively in their Things; when they finish it, yours resolves.
-Long-term vision (NOT v1): "Things Family / Team" — multi-tenant,
+Long-term vision (NOT v1): "Tandem Family / Team" — multi-tenant,
 cloud-hosted, inviteable. v1 is two members over a home LAN.
 
 ## 2. The physics (verified constraints)
@@ -145,7 +145,7 @@ transfers; `UNIQUE(transfer_id, kind, to_member)` on deliveries.
 
 ## 5. Envelope (fidelity contract)
 
-Schema-versioned (`things-team.todo/1`). Title and notes arrive
+Schema-versioned (`tandem.todo/1`). Title and notes arrive
 byte-identical — **no sync markers are ever injected into content** (the
 ledger's uuid mapping makes items self-identifying). Checklist items arrive
 unchecked (platform limit). `when` carries only *explicit* scheduling — a

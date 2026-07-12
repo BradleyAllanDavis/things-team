@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# things-team spoke installer for a member Mac (Aaron's Mac).
+# tandem spoke installer for a member Mac (Aaron's Mac).
 # Idempotent — safe to re-run. Everything is stock macOS: /usr/bin/python3,
 # /bin/zsh, launchd. No Homebrew/Nix dependencies.
 #
@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/BradleyAllanDavis/things-team"
+REPO_URL="https://github.com/BradleyAllanDavis/tandem"
 REPO_DIR="$HOME/things-team"
 APPSUPPORT="$HOME/Library/Application Support/things-team"
 CONFIG_DIR="$HOME/.config/things-team"
@@ -25,9 +25,9 @@ AGENTS="$HOME/Library/LaunchAgents"
 # HTTPS Cloudflare Tunnel hostname — Aaron is off-LAN, there is no LAN IP
 # path for him. Fill in the real hostname once the tunnel exists (see
 # docs/research/things-team-HANDOFF.md).
-HUB_URL="${THINGS_TEAM_HUB_URL:-https://REPLACE-WITH-TUNNEL-HOSTNAME.bdavis.io}"
+HUB_URL="${TANDEM_HUB_URL:-https://REPLACE-WITH-TUNNEL-HOSTNAME.bdavis.io}"
 
-echo "=== things-team spoke install ==="
+echo "=== tandem spoke install ==="
 
 # 1. Code
 if [ -d "$REPO_DIR/.git" ]; then

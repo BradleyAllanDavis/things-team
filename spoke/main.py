@@ -1,9 +1,9 @@
-"""things-team spoke entrypoint — the LaunchAgent on a member's Mac
+"""tandem spoke entrypoint — the LaunchAgent on a member's Mac
 (Jill's MacBook Air is the only deployed instance; the other member rides
 the things-gateway with no spoke at all).
 
 Config: JSON at ~/Library/Application Support/things-team/config.json
-(overridable via THINGS_TEAM_SPOKE_CONFIG):
+(overridable via TANDEM_SPOKE_CONFIG):
 
   {
     "hub_url": "http://192.168.0.30:8712",          // BY IP (LaunchAgent DNS)
@@ -38,7 +38,7 @@ DEFAULT_CONFIG = "~/Library/Application Support/things-team/config.json"
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-spoke] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-spoke] {msg}", file=sys.stderr, flush=True)
 
 
 def _file_token(path: str):
@@ -53,7 +53,7 @@ def _file_token(path: str):
 
 def main() -> None:
     config_path = os.path.expanduser(
-        os.environ.get("THINGS_TEAM_SPOKE_CONFIG", DEFAULT_CONFIG))
+        os.environ.get("TANDEM_SPOKE_CONFIG", DEFAULT_CONFIG))
     with open(config_path) as f:
         cfg = json.load(f)
 

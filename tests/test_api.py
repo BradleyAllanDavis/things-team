@@ -10,7 +10,7 @@ from hub.api import make_server
 from hub.ledger import Ledger
 from spoke.hub_http import HttpHubClient, HubHTTPError
 
-PAYLOAD = {"schema": "things-team.todo/1", "title": "水 filter", "notes": "",
+PAYLOAD = {"schema": "tandem.todo/1", "title": "水 filter", "notes": "",
            "checklist": ["a", "b"], "when": None, "deadline": None,
            "context_url": None}
 

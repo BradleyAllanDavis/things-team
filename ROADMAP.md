@@ -8,8 +8,10 @@ below is a reserved seam, in rough order.
 - **Re-delegation** — a resolved transfer's src_uuid can't currently be
   delegated again (push replays the resolved row). Ship together with rev
   bumps.
-- **Off-LAN members** — TLS in front of the hub (reverse proxy / tunnel),
-  same API; spoke config is already just `hub_url` + token file.
+- **Off-LAN members** — shipped as an option (`deploy/aaron/`, hub behind a
+  reverse tunnel; spoke config is already just `hub_url` + token file, and
+  long-poll survives a tunnel untouched). Not the default — a member needs
+  something in front of the hub if they're off the LAN.
 - **Real auth** — OAuth/passkey sessions behind the same Principal
   resolution; static device tokens remain for headless spokes.
 - **Tenant #2** — invite/pairing flow; the schema is already multi-tenant

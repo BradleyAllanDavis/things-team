@@ -34,7 +34,7 @@ The one real spoke in the v1 deployment. Everything runs on stock macOS
 ## 2. Install
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/things-team/main/deploy/jill/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/tandem/main/deploy/jill/install.sh)
 ```
 
 or clone and run `deploy/jill/install.sh`. It clones/updates the repo,

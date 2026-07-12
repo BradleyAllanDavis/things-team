@@ -1,16 +1,16 @@
-"""things-team hub entrypoint — HTTP API + declarative bootstrap + the
+"""tandem hub entrypoint — HTTP API + declarative bootstrap + the
 in-process gateway worker.
 
 Configuration is environment-driven (set by the nix module):
 
-  THINGS_TEAM_PORT / THINGS_TEAM_BIND      HTTP API (default 8712 / 0.0.0.0)
+  TANDEM_PORT / TANDEM_BIND      HTTP API (default 8712 / 0.0.0.0)
   STATE_DIRECTORY                          ledger + gateway spoke state
-  THINGS_TEAM_BOOTSTRAP                    JSON — declarative tenant/members/
+  TANDEM_BOOTSTRAP                    JSON — declarative tenant/members/
                                            devices, ensured idempotently at
                                            startup (see below)
-  THINGS_TEAM_GATEWAY_MEMBER               handle whose side runs in-process
+  TANDEM_GATEWAY_MEMBER               handle whose side runs in-process
                                            via the things-gateway (bradley)
-  THINGS_TEAM_TRIGGER_TAGS                 JSON {recipient_handle: [exact tag
+  TANDEM_TRIGGER_TAGS                 JSON {recipient_handle: [exact tag
                                            titles]} for the gateway member's
                                            outbound scan
   THINGS_MIRROR_DB                         synced Things DB mirror path
@@ -18,7 +18,7 @@ Configuration is environment-driven (set by the nix module):
   CREDENTIALS_DIRECTORY/queue-token        things-queue bearer token
   CREDENTIALS_DIRECTORY/<name>             spoke device tokens (bootstrap
                                            "token_credential" entries)
-  THINGS_TEAM_TICK_SECONDS                 gateway tick interval (default 60)
+  TANDEM_TICK_SECONDS                 gateway tick interval (default 60)
 
 Bootstrap JSON shape (1Password stays canonical for tokens; the hub only
 ever stores the sha256 of what the deploy materialized):
@@ -46,7 +46,7 @@ from .ledger import Ledger
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-hub] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-hub] {msg}", file=sys.stderr, flush=True)
 
 
 def _credential(name: str):
@@ -116,12 +116,12 @@ def run_gateway_worker(ledger: Ledger, tenant_name: str) -> None:
     from spoke.things_db import MirrorReader
     from spoke.writer_queue import QueueWriter
 
-    handle = os.environ["THINGS_TEAM_GATEWAY_MEMBER"]
-    trigger_tags = json.loads(os.environ.get("THINGS_TEAM_TRIGGER_TAGS", "{}"))
+    handle = os.environ["TANDEM_GATEWAY_MEMBER"]
+    trigger_tags = json.loads(os.environ.get("TANDEM_TRIGGER_TAGS", "{}"))
     mirror_path = os.environ.get("THINGS_MIRROR_DB",
                                  "/var/lib/things-mirror/main.sqlite")
     queue_url = os.environ.get("THINGS_QUEUE_URL", "http://127.0.0.1:8090")
-    tick_seconds = float(os.environ.get("THINGS_TEAM_TICK_SECONDS", "60"))
+    tick_seconds = float(os.environ.get("TANDEM_TICK_SECONDS", "60"))
     state_dir = os.environ.get("STATE_DIRECTORY", "/var/lib/things-team")
 
     def queue_token():
@@ -195,27 +195,27 @@ def run_gateway_worker(ledger: Ledger, tenant_name: str) -> None:
 
 def main() -> None:
     state_dir = os.environ.get("STATE_DIRECTORY") or os.environ.get(
-        "THINGS_TEAM_STATE_DIR", "/var/lib/things-team")
+        "TANDEM_STATE_DIR", "/var/lib/things-team")
     os.makedirs(state_dir, exist_ok=True)
     ledger = Ledger(os.path.join(state_dir, "ledger.sqlite"))
 
     spec = None
-    raw = os.environ.get("THINGS_TEAM_BOOTSTRAP", "")
+    raw = os.environ.get("TANDEM_BOOTSTRAP", "")
     if raw:
         spec = json.loads(raw)
         bootstrap(ledger, spec)
 
-    if os.environ.get("THINGS_TEAM_GATEWAY_MEMBER"):
+    if os.environ.get("TANDEM_GATEWAY_MEMBER"):
         if not spec:
-            _log("THINGS_TEAM_GATEWAY_MEMBER set but no THINGS_TEAM_BOOTSTRAP — "
+            _log("TANDEM_GATEWAY_MEMBER set but no TANDEM_BOOTSTRAP — "
                  "cannot resolve tenant; gateway worker disabled")
         else:
             threading.Thread(
                 target=run_gateway_worker, args=(ledger, spec["tenant"]),
                 daemon=True, name="gateway-worker").start()
 
-    bind = os.environ.get("THINGS_TEAM_BIND", "0.0.0.0")
-    port = int(os.environ.get("THINGS_TEAM_PORT", "8712"))
+    bind = os.environ.get("TANDEM_BIND", "0.0.0.0")
+    port = int(os.environ.get("TANDEM_PORT", "8712"))
     server = make_server(ledger, bind, port)
     _log(f"listening on {bind}:{port}, ledger={ledger.db_path}")
     server.serve_forever()

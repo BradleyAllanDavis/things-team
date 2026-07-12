@@ -22,7 +22,7 @@ consent, or something else. Decide this before sending Aaron anything.
 - The Cloudflare Tunnel live and routing to the hub (see the HANDOFF doc —
   blocked as of 2026-07-11 on a Cloudflare API token permission).
 - This Mac's device provisioned on the hub (`aaron-air` — done declaratively
-  on the hub host, `mine.services.things-team-hub` in
+  on the hub host, `mine.services.tandem-hub` in
   `systems/linux/protectli/services.nix`).
 - Things 3 installed, signed into his Things Cloud, running.
 
@@ -52,8 +52,8 @@ consent, or something else. Decide this before sending Aaron anything.
 ## 2. Install
 
 ```bash
-THINGS_TEAM_HUB_URL="https://<tunnel-hostname>.bdavis.io" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/things-team/main/deploy/aaron/install.sh)
+TANDEM_HUB_URL="https://<tunnel-hostname>.bdavis.io" \
+  bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/tandem/main/deploy/aaron/install.sh)
 ```
 
 or clone and run `deploy/aaron/install.sh` with that env var set. It

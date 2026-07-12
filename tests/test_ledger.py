@@ -8,7 +8,7 @@ import unittest
 
 from hub.ledger import AuthError, Forbidden, Ledger, LedgerError, NotFound
 
-PAYLOAD = {"schema": "things-team.todo/1", "title": "buy milk", "notes": "",
+PAYLOAD = {"schema": "tandem.todo/1", "title": "buy milk", "notes": "",
            "checklist": [], "when": None, "deadline": None, "context_url": None}
 
 

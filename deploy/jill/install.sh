@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# things-team spoke installer for a member Mac (Jill's MacBook Air).
+# tandem spoke installer for a member Mac (Jill's MacBook Air).
 # Idempotent — safe to re-run. Everything is stock macOS: /usr/bin/python3,
 # /bin/zsh, launchd. No Homebrew/Nix dependencies.
 #
@@ -11,14 +11,14 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/BradleyAllanDavis/things-team"
+REPO_URL="https://github.com/BradleyAllanDavis/tandem"
 REPO_DIR="$HOME/things-team"
 APPSUPPORT="$HOME/Library/Application Support/things-team"
 CONFIG_DIR="$HOME/.config/things-team"
 AGENTS="$HOME/Library/LaunchAgents"
-HUB_URL="${THINGS_TEAM_HUB_URL:-http://192.168.0.30:8712}"  # BY IP — LaunchAgent DNS is unreliable
+HUB_URL="${TANDEM_HUB_URL:-http://192.168.0.30:8712}"  # BY IP — LaunchAgent DNS is unreliable
 
-echo "=== things-team spoke install ==="
+echo "=== tandem spoke install ==="
 
 # 1. Code
 if [ -d "$REPO_DIR/.git" ]; then

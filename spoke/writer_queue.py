@@ -20,13 +20,13 @@ import urllib.request
 
 
 def _log(msg: str) -> None:
-    print(f"[things-team-qwriter] {msg}", file=sys.stderr, flush=True)
+    print(f"[tandem-qwriter] {msg}", file=sys.stderr, flush=True)
 
 
 class QueueWriter:
     def __init__(self, queue_url: str, token_provider,
                  ack_timeout: float = 180.0, poll_interval: float = 2.0,
-                 agent: str = "things-team-hub"):
+                 agent: str = "tandem-hub"):
         self.queue_url = queue_url.rstrip("/")
         self.token_provider = token_provider  # callable -> str (re-read per call: rotation)
         self.ack_timeout = ack_timeout
@@ -93,7 +93,7 @@ class QueueWriter:
         status = self._submit_and_wait(
             {"type": "to-do", "operation": "update", "id": uuid,
              "attributes": {attr: True}},
-            f"things-team-terminal:{uuid}:{state}")
+            f"tandem-terminal:{uuid}:{state}")
         if status == "applied":
             _log(f"terminal {state} on {uuid} applied but not mirror-verified")
         return True
