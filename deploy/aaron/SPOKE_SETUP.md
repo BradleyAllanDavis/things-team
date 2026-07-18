@@ -1,99 +1,137 @@
-# Spoke setup — Aaron's Mac
+# Setting up Tandem on your Mac
 
-Aaron is off-LAN (his own house, his own Mac, his own Things account) — this
-setup is `deploy/jill/`'s pattern adapted for that: the hub URL is the public
-Cloudflare Tunnel hostname instead of a LAN IP, otherwise identical. Stock
-macOS (`/usr/bin/python3`, `/bin/zsh`, launchd), no Homebrew/Nix required.
-`install.sh` is idempotent; these are the steps around it.
+Hi Aaron — this sets up two-way task sharing between your Things app and
+Bradley's. Tag a task `b` and it lands in his Things inbox; when he tags one
+for you, it lands in yours. Nothing is installed except one small program
+that only Bradley's server on his end talks to — it never touches your
+Things Cloud account or password.
 
-**Unresolved as of 2026-07-11 — who actually runs this, and how:** Jill's
-equivalent install was largely driven *by Bradley*, remotely, over SSH
-(`jill-dotfiles/remote-admin.sh`) — he has that kind of access to her Mac.
-Bradley has no such access to Aaron's Mac, and Aaron isn't a Mac Bradley
-controls or administers. Nothing in
-`docs/plans/things-team-external-access.md` specifies how this script and
-the manual grants below actually get executed on Aaron's machine — screen
-share with Bradley narrating each step, Aaron running it solo off written
-instructions, temporary remote-access software with Aaron's explicit
-consent, or something else. Decide this before sending Aaron anything.
+Everything below runs with tools already built into your Mac (Terminal,
+Python, the built-in scripting tool). Nothing to download except the
+Tandem code itself, which the install command handles for you.
 
-## 0. What must exist first
+**Before you start:** Things 3 needs to be installed and you need to be
+signed into your own Things account in it. That's it — everything else
+Bradley already set up on his side.
 
-- The Cloudflare Tunnel live and routing to the hub (see the HANDOFF doc —
-  blocked as of 2026-07-11 on a Cloudflare API token permission).
-- This Mac's device provisioned on the hub (`aaron-air` — done declaratively
-  on the hub host, `mine.services.tandem-hub` in
-  `systems/linux/protectli/services.nix`).
-- Things 3 installed, signed into his Things Cloud, running.
+Budget about 10 minutes. Do the steps in order.
 
-## 1. Manual one-time grants + tokens (needs hands on the Mac)
+## Step 1 — Give Terminal permission to read your task list
 
-1. **Full Disk Access for `/bin/zsh`** (the mirror agent's interpreter):
-   System Settings → Privacy & Security → Full Disk Access → `+` →
-   `⌘⇧G` → `/bin/zsh`. Survives all updates because the grant is on a
-   stable Apple binary.
-2. **Things URL scheme token**: Things → Settings → General → Enable
-   Things URLs → copy token, then:
+1. Open **System Settings** (the gear icon, or click the Apple menu top
+   left → System Settings).
+2. Go to **Privacy & Security** → **Full Disk Access**.
+3. Click the **+** button.
+4. A file picker opens. Press **Cmd+Shift+G** (this opens a "Go to folder"
+   box), type `/bin/zsh`, and press Return. This adds `zsh` — the program
+   that reads a private copy of your task list — to the allowed list.
+5. Make sure the switch next to it is turned **on**.
+
+This survives macOS updates, so you only do it once.
+
+## Step 2 — Turn on the Things URL and save your token
+
+1. Open **Things**.
+2. Go to **Things → Settings…** (top-left menu) → **General**.
+3. Turn on **Enable Things URLs**.
+4. Click to reveal/copy the token shown there (a long string of letters
+   and numbers).
+5. Open **Terminal** (press **Cmd+Space**, type `Terminal`, press Return).
+6. Paste this, but replace `PASTE-YOUR-TOKEN-HERE` with the token you just
+   copied (right-click → Paste to paste into Terminal), then press Return:
+
    ```bash
    mkdir -p ~/.config/things-team
-   printf '%s' '<THINGS-TOKEN>' > ~/.config/things-team/things-auth-token
+   printf '%s' 'PASTE-YOUR-TOKEN-HERE' > ~/.config/things-team/things-auth-token
    chmod 600 ~/.config/things-team/things-auth-token
    ```
-3. **Hub device token** (issued at hub provisioning, canonical in
-   1Password — `Things Team Aaron Device Token`):
-   ```bash
-   printf '%s' '<DEVICE-TOKEN>' > ~/.config/things-team/device-token
-   chmod 600 ~/.config/things-team/device-token
-   ```
-   Someone with 1Password Automation-vault access has to hand Aaron this
-   value out-of-band (voice call, not email/text) — he has no 1Password
-   access of his own.
 
-## 2. Install
+## Step 3 — Save the device token Bradley gives you
+
+Bradley will read you a second, different token **over a phone call** (not
+text or email — it's a credential, so it's handled like one). In the same
+Terminal window, paste this and replace `PASTE-DEVICE-TOKEN-HERE` with what
+he reads you, then press Return:
 
 ```bash
-TANDEM_HUB_URL="https://<tunnel-hostname>.bdavis.io" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/tandem/main/deploy/aaron/install.sh)
+printf '%s' 'PASTE-DEVICE-TOKEN-HERE' > ~/.config/things-team/device-token
+chmod 600 ~/.config/things-team/device-token
 ```
 
-or clone and run `deploy/aaron/install.sh` with that env var set. It
-clones/updates the repo, writes/reconciles the spoke config, **pre-creates
-the three tags this Mac needs** (`b`, `👉 delegated`, `from-bradley 👨` —
-programmatic writes silently drop unknown tags), installs + loads both
-LaunchAgents.
+## Step 4 — Run the installer
 
-| Agent | What |
-|---|---|
-| `com.aaron.things-mirror` | 5s snapshot of the Things DB to `~/.cache/things-mirror/main.sqlite` (zsh + FDA) |
-| `com.aaron.things-team-spoke` | the spoke tick (KeepAlive, stock python3), 5s interval, long-polls deliveries for ~3s of it, over HTTPS to the tunnel hostname |
-
-## 3. Verify
+Still in Terminal, paste this exactly and press Return:
 
 ```bash
-ls -la ~/.cache/things-mirror/main.sqlite     # mirror landed (FDA works)
-tail -20 /tmp/things-team-spoke.err           # "spoke up: hub=…", ticking
+bash <(curl -fsSL https://raw.githubusercontent.com/BradleyAllanDavis/tandem/main/deploy/aaron/install.sh)
 ```
 
-Then the live loop, both directions:
+It downloads the code, sets everything up, and starts two small background
+helpers. It's safe to run more than once — if anything looks wrong later,
+re-running this exact command is a reasonable first thing to try.
 
-1. Bradley tags a todo `aaron` → within ~10-20s it appears in Aaron's
-   Things Inbox tagged `from-bradley 👨`, and Bradley's copy retags to
-   `👉 delegated` AND marks itself completed — same tick, not waiting on
-   Aaron to finish the task (D2, 2026-07-11).
-2. Aaron completes it whenever — Bradley's copy already closed out at
-   delivery; Aaron's completion just resolves the transfer hub-side.
-3. Reverse: Aaron tags a todo `b` → lands in Bradley's Inbox
-   (`from-aaron`, no emoji configured yet — add one to `hub/ledger.py`'s
-   `_PROVENANCE_EMOJI` when Aaron's person-emoji is decided) → Aaron's own
-   copy completes at send too → Bradley completes his on his own time.
+**Two popups you might see the first time — both are normal, say yes to
+both:**
+- *"Terminal" wants to control "Things3"* — click **Allow**. This is macOS
+  asking permission for the install script to create a few tags in Things.
+- If this is a fairly new Mac and it's the very first time you've typed a
+  command like this: macOS may pop up asking to install **"command line
+  developer tools."** Click **Install**, wait for it to finish (a few
+  minutes, needs internet), then run the same install command again.
 
-## Troubleshooting
+When it finishes, it prints a checklist. If it says anything is
+**MISSING**, go back and redo that step (2 or 3 above), then run the
+install command again.
 
-- `no Things database visible` in `/tmp/things-mirror.err` → FDA grant
-  missing (step 1.1).
-- Spoke log shows `hub returned 401` → device token file wrong/rotated.
-- Created todos never correlate → Things URL token wrong (writes are
-  silently dropped); re-check step 1.2.
-- Hub unreachable → check the tunnel is actually up
-  (`curl -s https://<tunnel-hostname>.bdavis.io/v1/health` should return
-  401, not a connection error) before assuming the spoke is broken.
+## Step 5 — Confirm it's actually working
+
+Paste each of these one at a time:
+
+```bash
+ls -la ~/.cache/things-mirror/main.sqlite
+```
+You should see a file listed with a recent timestamp (today, a few seconds
+old). If instead it says "No such file or directory," Step 1 (Full Disk
+Access) didn't take — redo it, then wait about 10 seconds and try again.
+
+```bash
+tail -20 /tmp/things-team-spoke.err
+```
+You should see lines like `spoke up: hub=…` repeating every few seconds.
+If you see `hub returned 401` instead, the device token from Step 3 is
+wrong — call Bradley back for the right one and redo Step 3.
+
+### The real test
+
+1. Ask Bradley to tag a task `aaron` on his end. Within about 20-30 seconds
+   it should show up in **your** Things Inbox, tagged `from-bradley 👨`.
+2. File it wherever you like, complete it whenever — no rush, his copy
+   already marked itself done the moment it reached you.
+3. To send one back: tag any of your own tasks `b` (lowercase). It lands
+   in his Inbox tagged `from-aaron`, and your copy marks itself done the
+   moment it arrives.
+
+If both directions work, you're done.
+
+## If something's not working
+
+- `no Things database visible` in `/tmp/things-mirror.err` → Step 1 (Full
+  Disk Access) is missing or wasn't actually turned on. Redo it.
+- `/tmp/things-team-spoke.err` shows `hub returned 401` → the device token
+  (Step 3) is wrong. Ask Bradley to read it to you again and re-save it.
+- Tasks you tag `b` never show up on Bradley's end → the Things URL token
+  (Step 2) is likely wrong — Things silently ignores a bad token instead of
+  erroring. Redo Step 2.
+- Can't reach the server at all → paste this and read what comes back:
+  ```bash
+  curl -s https://y8xh2lm6s9f1uu0t5jq8.bdavis.io/v1/health
+  ```
+  A working server answers with something like
+  `{"ok": true, "pending_deliveries": 0, "open_transfers": 0}`. If instead
+  you get "Could not resolve host" or it hangs with nothing back, the
+  problem is on Bradley's end (his server is down) — text him this exact
+  output and he'll take it from there.
+
+Anything else that doesn't match one of the above — screenshot the
+Terminal output and send it to Bradley. He can read what a program printed
+without needing hands on your Mac.

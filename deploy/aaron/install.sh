@@ -23,11 +23,17 @@ APPSUPPORT="$HOME/Library/Application Support/things-team"
 CONFIG_DIR="$HOME/.config/things-team"
 AGENTS="$HOME/Library/LaunchAgents"
 # HTTPS Cloudflare Tunnel hostname — Aaron is off-LAN, there is no LAN IP
-# path for him. Fill in the real hostname once the tunnel exists (see
-# docs/research/things-team-HANDOFF.md).
-HUB_URL="${TANDEM_HUB_URL:-https://REPLACE-WITH-TUNNEL-HOSTNAME.bdavis.io}"
+# path for him. This is the real, live tunnel hostname; override with
+# TANDEM_HUB_URL only if Bradley tells you to use a different one.
+HUB_URL="${TANDEM_HUB_URL:-https://y8xh2lm6s9f1uu0t5jq8.bdavis.io}"
 
 echo "=== tandem spoke install ==="
+
+if [ ! -d "/Applications/Things3.app" ]; then
+  echo "ERROR: Things3 isn't installed in /Applications."
+  echo "Install it from the Mac App Store, open it once, sign in, then run this script again."
+  exit 1
+fi
 
 # 1. Code
 if [ -d "$REPO_DIR/.git" ]; then
@@ -132,9 +138,31 @@ for label in com.aaron.things-mirror com.aaron.things-team-spoke; do
 done
 
 echo ""
-echo "=== Installed. Verify: ==="
-echo "  1. ls -la ~/.cache/things-mirror/main.sqlite   (mirror landing — needs FDA on /bin/zsh)"
-echo "  2. tail -f /tmp/things-team-spoke.err          (spoke tick log)"
-echo "  3. Token files present + chmod 600:"
-echo "       $CONFIG_DIR/device-token"
-echo "       $CONFIG_DIR/things-auth-token"
+echo "=== Installed. Checking your setup: ==="
+ok=1
+if [ ! -s "$CONFIG_DIR/device-token" ]; then
+  echo "  ✗ MISSING: $CONFIG_DIR/device-token — see SPOKE_SETUP.md Step 3"
+  ok=0
+elif grep -q '^PASTE-' "$CONFIG_DIR/device-token"; then
+  echo "  ✗ NOT REPLACED: $CONFIG_DIR/device-token still has the placeholder text — redo SPOKE_SETUP.md Step 3"
+  ok=0
+else
+  echo "  ✓ device token file present"
+fi
+if [ ! -s "$CONFIG_DIR/things-auth-token" ]; then
+  echo "  ✗ MISSING: $CONFIG_DIR/things-auth-token — see SPOKE_SETUP.md Step 2"
+  ok=0
+elif grep -q '^PASTE-' "$CONFIG_DIR/things-auth-token"; then
+  echo "  ✗ NOT REPLACED: $CONFIG_DIR/things-auth-token still has the placeholder text — redo SPOKE_SETUP.md Step 2"
+  ok=0
+else
+  echo "  ✓ Things URL token file present"
+fi
+if [ "$ok" != "1" ]; then
+  echo ""
+  echo "  Add the missing file(s) above, then run this install command again — it's safe to re-run."
+fi
+echo ""
+echo "  Now check:"
+echo "  1. ls -la ~/.cache/things-mirror/main.sqlite   (mirror landing — needs Full Disk Access)"
+echo "  2. tail -f /tmp/things-team-spoke.err          (spoke tick log — look for 'spoke up: hub=…')"
