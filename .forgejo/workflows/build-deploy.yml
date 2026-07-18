@@ -1,0 +1,56 @@
+name: build-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "hub/**"
+      - "Dockerfile"
+
+# Same privilege-separated pipeline as toy-services (see that repo's
+# build-deploy.yml for the full rationale): this runner is a DynamicUser
+# systemd unit with no podman and no gitops credential, so it drops job files
+# into /var/lib/ci-dispatch/queue and a root oneshot (ci-dispatch-watch,
+# ~/.dotfiles systems/linux/tank/services.nix) does the podman build/push and
+# the k3s-gitops image-tag bump. Argo CD reconciles from k3s-gitops.
+jobs:
+  build-deploy:
+    runs-on: native
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build + deploy tandem-hub
+        run: |
+          set -eu
+
+          dispatch() {
+            # $1=kind, $2..=args -- writes a queue job file, polls for the
+            # matching result file, replays its log, returns its rc.
+            kind=$1; shift
+            id="$(date +%s%N)-$$-$RANDOM"
+            job="/var/lib/ci-dispatch/queue/$id.job"
+            {
+              echo "$kind"
+              for a in "$@"; do echo "$a"; done
+            } > "$job.tmp"
+            mv "$job.tmp" "$job"
+
+            i=0
+            while [ "$i" -lt 120 ]; do
+              if [ -f "/var/lib/ci-dispatch/results/$id.rc" ]; then
+                rc=$(cat "/var/lib/ci-dispatch/results/$id.rc")
+                cat "/var/lib/ci-dispatch/results/$id.log" >&2
+                rm -f "/var/lib/ci-dispatch/results/$id.rc" "/var/lib/ci-dispatch/results/$id.log"
+                return "$rc"
+              fi
+              i=$((i + 1))
+              sleep 1
+            done
+            echo "dispatch $kind ($id): timed out waiting for ci-dispatch-watch" >&2
+            return 1
+          }
+
+          sha=$(git rev-parse --short HEAD)
+          echo "== tandem-hub @ $sha =="
+          dispatch build "$PWD" tandem-hub "$sha"
+          dispatch gitops tandem-hub "$sha"

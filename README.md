@@ -111,3 +111,14 @@ v1, two members live (my wife and me) round-tripping delegations daily; a
 third (a friend, off-LAN over a tunnel) is configured on the hub and pending
 his own device setup. Built for my family; the tenancy model (tenants →
 members → devices, capability tiers) is the seam for anything bigger.
+
+## Deployment
+
+Three targets, one env-driven process (`hub/server.py`):
+
+- 🏠 **Production (NixOS)** — `deploy/nix/module.nix`, the family hub as a
+  systemd service. This is the live instance.
+- 🚢 **Kubernetes (homelab k3s, GitOps)** — containerized hub, `git push` →
+  CI → Argo CD. The Nix-to-K8s story: `deploy/k8s/README.md`.
+- ☁️ **Cloud (AWS / GCP)** — Terraform for ECS Fargate and Cloud Run,
+  prep-only, nothing provisioned: `deploy/cloud/README.md`.

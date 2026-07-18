@@ -1,0 +1,4 @@
+# Image contents are exactly hub/ — everything else (spoke, tests, docs,
+# deploy, graphify) never enters the build context.
+*
+!hub/
