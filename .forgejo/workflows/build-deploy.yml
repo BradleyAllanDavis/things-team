@@ -6,6 +6,9 @@ on:
     paths:
       - "hub/**"
       - "Dockerfile"
+  # Manual deploys (and reruns after infra fixes) without a code push:
+  #   POST /api/v1/repos/bradley/things-team/actions/workflows/build-deploy.yml/dispatches
+  workflow_dispatch:
 
 # Same privilege-separated pipeline as toy-services (see that repo's
 # build-deploy.yml for the full rationale): this runner is a DynamicUser
