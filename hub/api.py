@@ -1,7 +1,8 @@
 """tandem hub HTTP API — the /v1 surface spokes talk to.
 
 Stdlib ThreadingHTTPServer (deliberately no framework — matches the
-things-gateway convention this deploys next to). All routes require
+things-gateway convention this deploys next to). All routes except
+`GET /v1/health` (unauthenticated liveness) require
 `Authorization: Bearer <device-token>`; auth resolves to a Principal
 (tenant, member, device, caps) and the sync core never sees tokens.
 
@@ -82,10 +83,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._handle(self._post)
 
     def _get(self):
-        p = self._principal()
         parsed = urlparse(self.path)
         if parsed.path == "/v1/health":
+            # Unauthenticated by design: liveness/readiness probes (k8s) and
+            # uptime checks can't carry a device token. Exposes only ok +
+            # aggregate queue counts — no tenant/member/payload data.
             return self._send(200, self.ledger.health())
+        p = self._principal()
         if parsed.path == "/v1/deliveries":
             qs = parse_qs(parsed.query)
             limit = min(int(qs.get("limit", ["10"])[0]), 50)

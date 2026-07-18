@@ -41,8 +41,17 @@ class ApiTest(unittest.TestCase):
 
     def test_auth_rejected(self):
         with self.assertRaises(HubHTTPError) as ctx:
-            self.client("garbage").health()
+            self.client("garbage").watch()
         self.assertEqual(ctx.exception.status, 401)
+
+    def test_health_is_unauthenticated(self):
+        # the liveness contract: no token needed, counts only
+        import json
+        import urllib.request
+        with urllib.request.urlopen(f"{self.url}/v1/health") as resp:
+            body = json.load(resp)
+        self.assertTrue(body["ok"])
+        self.assertIn("pending_deliveries", body)
 
     def test_full_loop_over_http(self):
         b = self.client(self.b_token)
@@ -96,11 +105,11 @@ class ApiTest(unittest.TestCase):
         self.assertIn("token", dev)
         # the new token works…
         aaron = self.client(dev["token"])
-        self.assertTrue(aaron.health()["ok"])
+        self.assertEqual(aaron.watch(), [])
         # …until revoked
         b._request("POST", f"/v1/admin/devices/{dev['id']}/revoke", {})
         with self.assertRaises(HubHTTPError) as ctx:
-            aaron.health()
+            aaron.watch()
         self.assertEqual(ctx.exception.status, 401)
 
 

@@ -1,6 +1,7 @@
 # Tandem — wire protocol (v1)
 
-All endpoints under `/v1`, JSON bodies, `Authorization: Bearer <device-token>`.
+All endpoints under `/v1`, JSON bodies, `Authorization: Bearer <device-token>`
+(exception: `GET /v1/health` is unauthenticated — liveness for probes/monitors).
 Auth resolves to a Principal (tenant, member, device, capabilities); no
 endpoint ever accepts a tenant or member identifier *for* the caller — who
 you are always comes from auth.
